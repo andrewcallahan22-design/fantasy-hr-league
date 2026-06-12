@@ -1,0 +1,9 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# 00:00 & 06:00 UTC = 5:00 PM & 11:00 PM Pacific (PDT).
+# Note: when clocks change to PST in November these become 4 PM & 10 PM Pacific;
+# change to "0 1,7 * * *" then if you want to keep 5/11 PM exactly.
+[functions."scheduled-sync"]
+  schedule = "0 0,6 * * *"

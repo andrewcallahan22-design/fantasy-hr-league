@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fantasy HR League</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --green-deep:  #0d2818;
+    --green-field: #1a4a2e;
+    --green-mid:   #246b3e;
+    --green-light: #3a9e5f;
+    --chalk:       #f2f0e8;
+    --chalk-dim:   #c8c4b4;
+    --chalk-faint: #9e9a8c;
+    --amber:       #e8a020;
+    --amber-dim:   #b87a10;
+    --red:         #c0392b;
+    --scoreboard:  #0a1f12;
+    --card-bg:     #ffffff;
+    --card-border: #e0ddd4;
+    --text-main:   #1a1a1a;
+    --text-muted:  #6b6860;
+    --text-faint:  #9e9a8c;
+    --radius:      10px;
+    --radius-sm:   6px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: var(--green-deep); color: var(--chalk); min-height: 100vh; }
+
+  /* HEADER */
+  .site-header { background: var(--scoreboard); border-bottom: 3px solid var(--green-mid); padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 64px; position: sticky; top: 0; z-index: 100; }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-diamond { width: 32px; height: 32px; background: var(--amber); transform: rotate(45deg); border-radius: 3px; flex-shrink: 0; }
+  .logo-text { font-family: 'Oswald', sans-serif; font-size: 22px; font-weight: 700; letter-spacing: .04em; color: var(--chalk); text-transform: uppercase; }
+  .logo-text span { color: var(--amber); }
+  .header-right { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--chalk-faint); font-family: 'Roboto Mono', monospace; justify-content: flex-end; min-width: 0; }
+  #sync-status { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media(max-width:640px){ #sync-status { max-width: 140px; } }
+  .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--chalk-faint); flex-shrink: 0; }
+  .sync-dot.live    { background: var(--green-light); animation: blink 2s infinite; }
+  .sync-dot.loading { background: var(--amber); animation: blink .5s infinite; }
+  .sync-dot.err     { background: var(--red); }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* NAV */
+  .nav { background: var(--green-field); border-bottom: 1px solid var(--green-mid); display: flex; padding: 0 24px; overflow-x: auto; }
+  .nav-btn { font-family: 'Oswald', sans-serif; font-size: 14px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--chalk-dim); background: none; border: none; border-bottom: 3px solid transparent; padding: 14px 20px 11px; cursor: pointer; white-space: nowrap; transition: color .15s, border-color .15s; }
+  .nav-btn:hover { color: var(--chalk); }
+  .nav-btn.active { color: var(--amber); border-bottom-color: var(--amber); }
+
+  /* LAYOUT */
+  .page { display: none; }
+  .page.active { display: block; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 28px 24px; }
+
+  /* SCOREBOARD */
+  .scoreboard { background: var(--scoreboard); border: 1px solid var(--green-mid); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 24px; }
+  .scoreboard-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+  .scoreboard-title { font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--chalk-faint); }
+  .scoreboard-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media(max-width:600px){ .scoreboard-grid { grid-template-columns: 1fr 1fr; } }
+  .score-card { background: var(--green-field); border: 1px solid var(--green-mid); border-radius: var(--radius-sm); padding: 14px; text-align: center; position: relative; }
+  .score-card.leading { border-color: var(--amber); }
+  .score-rank  { font-family: 'Roboto Mono', monospace; font-size: 11px; color: var(--chalk-faint); margin-bottom: 4px; }
+  .score-name  { font-family: 'Oswald', sans-serif; font-size: 17px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--chalk); margin-bottom: 6px; }
+  .score-number { font-family: 'Oswald', sans-serif; font-size: 42px; font-weight: 700; color: var(--amber); line-height: 1; margin-bottom: 2px; }
+  .score-label { font-size: 11px; color: var(--chalk-faint); text-transform: uppercase; letter-spacing: .06em; }
+  .medal { font-size: 16px; position: absolute; top: 8px; right: 10px; }
+
+  /* ROSTER CARDS */
+  .roster-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width:700px){ .roster-grid { grid-template-columns: 1fr; } }
+  .roster-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius); overflow: hidden; color: var(--text-main); }
+  .roster-card-header { background: var(--green-deep); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; }
+  .roster-card-name { font-family: 'Oswald', sans-serif; font-size: 18px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--chalk); }
+  .roster-total { font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--amber); font-weight: 500; }
+  .roster-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .roster-table th { background: #f7f5ef; color: var(--text-muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--card-border); }
+  .roster-table th.right { text-align: right; }
+  .roster-table td { padding: 9px 10px; border-bottom: 1px solid #f0ede4; vertical-align: middle; }
+  .roster-table tr:last-child td { border-bottom: none; }
+  .roster-table tr:hover td { background: #fafaf7; }
+  .pos-tag { display: inline-block; background: #e8f4ec; color: var(--green-field); font-family: 'Roboto Mono', monospace; font-size: 10px; font-weight: 500; padding: 2px 6px; border-radius: 3px; }
+  .team-tag { font-family: 'Roboto Mono', monospace; font-size: 11px; color: var(--text-muted); }
+  .hr-input { width: 56px; text-align: right; font-family: 'Roboto Mono', monospace; font-size: 14px; font-weight: 500; padding: 4px 8px; border: 1px solid var(--card-border); border-radius: 5px; background: #fafafa; color: var(--text-main); transition: border-color .15s; }
+  .hr-input:focus { outline: none; border-color: var(--green-mid); background: #fff; }
+  .season-hint { font-family: 'Roboto Mono', monospace; font-size: 10px; color: var(--text-faint); }
+  .total-row td { background: #f7f5ef !important; font-weight: 600; font-family: 'Roboto Mono', monospace; font-size: 13px; border-top: 2px solid var(--card-border) !important; }
+
+
+
+  /* STANDINGS */
+  .standings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media(max-width:700px){ .standings-grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius); overflow: hidden; color: var(--text-main); }
+  .panel-header { background: var(--green-deep); padding: 11px 16px; font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .1em; color: var(--chalk-dim); }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .data-table th { background: #f7f5ef; color: var(--text-muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; padding: 7px 14px; text-align: left; border-bottom: 1px solid var(--card-border); }
+  .data-table th.r { text-align: right; }
+  .data-table td { padding: 10px 14px; border-bottom: 1px solid #f0ede4; vertical-align: middle; color: var(--text-main); }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: #fafaf7; }
+  .winner-badge { display: inline-block; background: var(--amber); color: var(--green-deep); font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 2px 9px; border-radius: 20px; }
+  .breakdown-wrap { overflow-x: auto; }
+
+  /* EDIT */
+  .edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width:700px){ .edit-grid { grid-template-columns: 1fr; } }
+  .edit-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius); overflow: hidden; color: var(--text-main); }
+  .edit-card-header { background: var(--green-deep); padding: 11px 16px; font-family: 'Oswald', sans-serif; font-size: 17px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--chalk); }
+  .edit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .edit-table th { background: #f7f5ef; color: var(--text-muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--card-border); }
+  .edit-table td { padding: 7px 10px; border-bottom: 1px solid #f0ede4; vertical-align: middle; }
+  .edit-table tr:last-child td { border-bottom: none; }
+  .edit-input { width: 100%; padding: 5px 8px; border: 1px solid var(--card-border); border-radius: 5px; font-size: 13px; font-family: 'Inter', sans-serif; background: #fafafa; color: var(--text-main); }
+  .edit-input:focus { outline: none; border-color: var(--green-mid); background: #fff; }
+  .edit-select { padding: 5px 7px; border: 1px solid var(--card-border); border-radius: 5px; font-size: 12px; font-family: 'Inter', sans-serif; background: #fafafa; color: var(--text-main); }
+  .edit-select:focus { outline: none; border-color: var(--green-mid); }
+
+  /* SETTINGS */
+  .settings-panel { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 20px 24px; color: var(--text-main); max-width: 480px; }
+  .settings-panel h3 { font-family: 'Oswald', sans-serif; font-size: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--green-field); margin-bottom: 12px; }
+  .settings-divider { height: 1px; background: var(--card-border); margin: 20px 0; }
+
+  /* IL LEGEND */
+  .il-legend { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+  .il-legend-label { font-size: 11px; color: var(--chalk-faint); font-family: 'Roboto Mono', monospace; margin-right: 4px; }
+
+  /* CONTROLS */
+  .btn { font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 8px 16px; border-radius: var(--radius-sm); border: 1.5px solid var(--chalk-dim); background: transparent; color: var(--chalk); cursor: pointer; transition: background .15s, border-color .15s; white-space: nowrap; }
+  .btn:hover { background: rgba(255,255,255,.08); border-color: var(--chalk); }
+  .btn.amber { background: var(--amber); border-color: var(--amber); color: var(--green-deep); }
+  .btn.amber:hover { background: var(--amber-dim); border-color: var(--amber-dim); }
+  .btn.sm { padding: 5px 11px; font-size: 11px; }
+  .btn-dark { font-family: 'Oswald', sans-serif; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; padding: 6px 13px; border-radius: var(--radius-sm); border: 1px solid var(--card-border); background: transparent; color: var(--text-muted); cursor: pointer; transition: background .15s; }
+  .btn-dark:hover { background: #f5f2ea; color: var(--text-main); }
+  .btn-dark.danger { color: var(--red); border-color: #f5c0bb; }
+  .btn-dark.danger:hover { background: #fff0ef; }
+  .text-input-dark { padding: 7px 11px; border: 1px solid var(--card-border); border-radius: var(--radius-sm); font-size: 13px; font-family: 'Inter', sans-serif; background: #fafafa; color: var(--text-main); }
+  .text-input-dark:focus { outline: none; border-color: var(--green-mid); }
+  .flex { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .page-heading { font-family: 'Oswald', sans-serif; font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--chalk); margin-bottom: 20px; }
+  select.month-select { font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; padding: 7px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--chalk-dim); background: transparent; color: var(--chalk); cursor: pointer; }
+  select.month-select option { background: var(--green-deep); color: var(--chalk); }
+  .tag-pill { display: inline-flex; align-items: center; gap: 5px; background: #e8f4ec; color: var(--green-field); font-family: 'Roboto Mono', monospace; font-size: 12px; padding: 3px 10px; border-radius: 20px; border: 1px solid #c0dfc9; }
+  .tag-pill .rm { cursor: pointer; color: var(--text-faint); font-size: 14px; line-height: 1; margin-left: 1px; }
+  .tag-pill .rm:hover { color: var(--red); }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="logo">
+    <div class="logo-diamond"></div>
+    <div class="logo-text">Fantasy <span>HR</span> League</div>
+  </div>
+  <div class="header-right">
+    <div class="sync-dot" id="sync-dot"></div>
+    <span id="sync-status">—</span>
+    <button class="btn sm" onclick="syncNow()">⟳ Sync</button>
+  </div>
+</header>
+
+<nav class="nav">
+  <button class="nav-btn active" onclick="showPage('scores')">Scores</button>
+  <button class="nav-btn" onclick="showPage('rosters')">Edit Rosters</button>
+  <button class="nav-btn" onclick="showPage('standings')">Standings</button>
+  <button class="nav-btn" onclick="showPage('history')">History</button>
+  <button class="nav-btn" onclick="showPage('settings')">Settings</button>
+</nav>
+
+<!-- SCORES -->
+<div id="page-scores" class="page active">
+  <div class="container">
+    <div class="scoreboard">
+      <div class="scoreboard-header">
+        <div class="scoreboard-title">⚾ Live Scoreboard</div>
+        <select class="month-select" id="sc-month-sel" onchange="setMonth(this.value);renderScores();"></select>
+      </div>
+      <div class="scoreboard-grid" id="sc-summary"></div>
+    </div>
+
+    <div class="roster-grid" id="sc-grid"></div>
+  </div>
+</div>
+
+<!-- ROSTERS -->
+<div id="page-rosters" class="page">
+  <div class="container">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+      <div class="page-heading" style="margin-bottom:0">Edit Rosters</div>
+      <div class="flex">
+        <select class="month-select" id="ro-month-sel" onchange="setMonth(this.value);renderRosters();"></select>
+        <button class="btn amber" onclick="addNextMonth()">+ Add Month</button>
+      </div>
+    </div>
+    <div class="edit-grid" id="ro-grid"></div>
+  </div>
+</div>
+
+<!-- STANDINGS -->
+<div id="page-standings" class="page">
+  <div class="container">
+    <div class="page-heading">Standings</div>
+    <div class="standings-grid">
+      <div class="panel"><div class="panel-header">Monthly Winners</div><div id="st-monthly"></div></div>
+      <div class="panel"><div class="panel-header">Season Standings</div><div id="st-season"></div></div>
+    </div>
+    <div class="panel"><div class="panel-header">Month-by-Month Breakdown</div><div class="breakdown-wrap" id="st-breakdown"></div></div>
+  </div>
+</div>
+
+<!-- HISTORY -->
+<div id="page-history" class="page">
+  <div class="container">
+    <div class="page-heading">Change History</div>
+    <p style="font-size:13px;color:var(--chalk-faint);margin:-10px 0 16px">Every HR added by sync or manual edit, newest first — use this to validate who homered and when.</p>
+    <div class="panel">
+      <div class="panel-header">HR Updates</div>
+      <div id="hist-table" style="overflow-x:auto"></div>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<div id="page-settings" class="page">
+  <div class="container">
+    <div class="page-heading">Settings</div>
+    <div class="settings-panel">
+      <h3>Managers</h3>
+      <div id="set-managers" style="margin-bottom:12px"></div>
+      <div class="flex">
+        <input type="text" class="text-input-dark" id="new-mgr" placeholder="Manager name" style="width:180px">
+        <button class="btn-dark" onclick="addManager()">Add</button>
+      </div>
+      <div class="settings-divider"></div>
+      <h3>Positions</h3>
+      <div id="set-positions" class="flex" style="margin-bottom:12px;flex-wrap:wrap;gap:6px"></div>
+      <div class="flex">
+        <input type="text" class="text-input-dark" id="new-pos" placeholder="e.g. DH" style="width:120px">
+        <button class="btn-dark" onclick="addPos()">Add</button>
+      </div>
+      <div class="settings-divider"></div>
+      <h3>Live Sync</h3>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.6">
+        League data is shared — every edit and sync updates the same scoreboard for all managers. The sync pulls official MLB totals; when a rostered player's season total rises, the new homers are added to their month count and logged in History. Your entered numbers are the baseline — the sync only adds what's new.
+      </p>
+      <p style="font-size:13px;color:var(--text-main);background:#e8f4ec;border:1px solid #c0dfc9;border-radius:6px;padding:10px 12px">
+        ✓ Auto-sync runs on the server at <strong>5 PM</strong> and <strong>11 PM</strong> Pacific — nobody needs to keep the page open. The ⟳ Sync button triggers it immediately for the whole league.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const INIT={
+  managers:['Max','Johnny','HK','Cali'],
+  positions:['C','1B','2B','3B','SS','OF','RF','CF','LF','DH','SP','RP'],
+  currentMonth:'June-2026',
+  autoSync:true,
+  // Seeded streak estimates from the June 10 baseline; replaced with exact
+  // MLB game-log values on the first successful sync.
+  streaks:{'aaron judge':0,'bobby witt jr':0,'juan soto':0,'gunnar henderson':0,'nick kurtz':2,'hunter goodman':2},
+  months:{
+    'April-2026':{rosters:{
+      'Max':[{player:'Aaron Judge',team:'NYY',position:'RF',hr:12},{player:'Pete Alonso',team:'NYM',position:'1B',hr:4},{player:'Bobby Witt Jr',team:'KC',position:'SS',hr:2},{player:'Vlad Guerrero Jr',team:'TOR',position:'1B',hr:2},{player:'Yordan Alvarez',team:'HOU',position:'DH',hr:12},{player:'Ketel Marte',team:'ARI',position:'2B',hr:5}],
+      'Johnny':[{player:'Kyle Schwarber',team:'PHI',position:'DH',hr:11},{player:'Eugenio Suarez',team:'ARI',position:'3B',hr:3},{player:'Byron Buxton',team:'MIN',position:'CF',hr:8},{player:'Nick Kurtz',team:'ATH',position:'1B',hr:5},{player:'Jose Ramirez',team:'CLE',position:'3B',hr:6},{player:'Hunter Goodman',team:'COL',position:'C',hr:9}],
+      'HK':[{player:'Shohei Ohtani',team:'LAD',position:'DH',hr:6},{player:'Juan Soto',team:'NYM',position:'RF',hr:3},{player:'Jo Adell',team:'LAA',position:'OF',hr:4},{player:'Fernando Tatis Jr',team:'SD',position:'RF',hr:0},{player:'Matt Olson',team:'ATL',position:'1B',hr:9},{player:'Munetaka Murakami',team:'NYM',position:'DH',hr:12}],
+      'Cali':[{player:'Cal Raleigh',team:'SEA',position:'C',hr:7},{player:'Junior Caminero',team:'TB',position:'3B',hr:8},{player:'Riley Greene',team:'DET',position:'CF',hr:4},{player:'Michael Busch',team:'CHC',position:'1B',hr:2},{player:'Rafael Devers',team:'BOS',position:'3B',hr:2},{player:'James Wood',team:'WAS',position:'RF',hr:10}]
+    }},
+    'May-2026':{rosters:{
+      'Max':[{player:'Aaron Judge',team:'NYY',position:'RF',hr:5},{player:'Junior Caminero',team:'TB',position:'3B',hr:5},{player:'Cal Raleigh',team:'SEA',position:'C',hr:0},{player:'Nick Kurtz',team:'ATH',position:'1B',hr:5},{player:'Jose Ramirez',team:'CLE',position:'3B',hr:2},{player:'Bobby Witt Jr',team:'KC',position:'SS',hr:7}],
+      'Johnny':[{player:'Kyle Schwarber',team:'PHI',position:'DH',hr:11},{player:'Elly De La Cruz',team:'CIN',position:'SS',hr:2},{player:'Mike Trout',team:'LAA',position:'CF',hr:4},{player:'Byron Buxton',team:'MIN',position:'CF',hr:9},{player:'Hunter Goodman',team:'COL',position:'C',hr:4},{player:'Willson Contreras',team:'STL',position:'C',hr:4}],
+      'HK':[{player:'Munetaka Murakami',team:'NYM',position:'DH',hr:8},{player:'Yordan Alvarez',team:'HOU',position:'DH',hr:8},{player:'Gunnar Henderson',team:'BAL',position:'SS',hr:4},{player:'Oneil Cruz',team:'PIT',position:'SS',hr:4},{player:'Ildemaro Vargas',team:'',position:'',hr:1},{player:'Riley Greene',team:'DET',position:'CF',hr:0}],
+      'Cali':[{player:'Shohei Ohtani',team:'LAD',position:'DH',hr:4},{player:'Juan Soto',team:'NYM',position:'RF',hr:10},{player:'James Wood',team:'WAS',position:'RF',hr:6},{player:'Vlad Guerrero Jr',team:'TOR',position:'1B',hr:1},{player:'Matt Olson',team:'ATL',position:'1B',hr:7},{player:'Corey Seager',team:'TEX',position:'SS',hr:1}]
+    }},
+    'June-2026':{rosters:{
+      'Max':[{player:'Aaron Judge',team:'NYY',position:'RF',hr:0},{player:'Junior Caminero',team:'TB',position:'3B',hr:1},{player:'Nick Kurtz',team:'ATH',position:'1B',hr:5},{player:'Bobby Witt Jr',team:'KC',position:'SS',hr:0},{player:'Hunter Goodman',team:'COL',position:'C',hr:5},{player:'Ketel Marte',team:'ARI',position:'2B',hr:2}],
+      'Johnny':[{player:'Shohei Ohtani',team:'LAD',position:'DH',hr:2},{player:'James Wood',team:'WAS',position:'RF',hr:2},{player:'Mike Trout',team:'LAA',position:'CF',hr:1},{player:'Oneil Cruz',team:'PIT',position:'CF',hr:1},{player:'Casey Schmitt',team:'SFG',position:'DH',hr:3},{player:'Jose Ramirez',team:'CLE',position:'3B',hr:2}],
+      'HK':[{player:'Kyle Schwarber',team:'PHI',position:'DH',hr:2},{player:'Byron Buxton',team:'MIN',position:'CF',hr:3},{player:'Matt Olson',team:'ATL',position:'1B',hr:2},{player:'Ian Happ',team:'CHC',position:'LF',hr:2},{player:'Gunnar Henderson',team:'BAL',position:'SS',hr:0},{player:'Eugenio Suarez',team:'CIN',position:'3B',hr:1}],
+      'Cali':[{player:'Yordan Alvarez',team:'HOU',position:'DH',hr:2},{player:'Juan Soto',team:'NYM',position:'RF',hr:0},{player:'Jordan Walker',team:'STL',position:'RF',hr:2},{player:'Colson Montgomery',team:'CHW',position:'SS',hr:1},{player:'Julio Rodriguez',team:'SEA',position:'CF',hr:1},{player:'Jake Burger',team:'TEX',position:'1B',hr:1}]
+    }}
+  }
+};
+
+let S, autoSyncTimer=null;
+
+
+const API_DATA = '/.netlify/functions/data';
+const API_SYNC = '/.netlify/functions/run-sync';
+
+let saveTimer = null;
+function save(){
+  // Debounced write of the shared league state — everyone sees the change.
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try{
+      const r = await fetch(API_DATA, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(S)});
+      if(!r.ok) throw new Error(r.status);
+    }catch(e){
+      console.warn('Save failed:', e);
+      setSyncUI('err','Save failed — check connection');
+    }
+  }, 600);
+}
+
+async function loadState(){
+  try{
+    const r = await fetch(API_DATA);
+    if(!r.ok) throw new Error(r.status);
+    S = await r.json();
+    return true;
+  }catch(e){
+    console.warn('League server unreachable, using built-in baseline:', e);
+    return false;
+  }
+}
+
+// Immediate paint with the built-in baseline; replaced by shared state in init().
+S = JSON.parse(JSON.stringify(INIT));
+
+function setMonth(k){S.currentMonth=k;save();}
+function getMonth(){return S.currentMonth;}
+function monthKeys(){
+  return Object.keys(S.months).sort((a,b)=>{
+    const[ma,ya]=a.split('-');const[mb,yb]=b.split('-');
+    return(parseInt(ya)*12+MONTHS.indexOf(ma))-(parseInt(yb)*12+MONTHS.indexOf(mb));
+  });
+}
+function populateSels(){
+  const keys=monthKeys(),cur=getMonth();
+  ['sc-month-sel','ro-month-sel'].forEach(id=>{
+    const el=document.getElementById(id);if(!el)return;
+    el.innerHTML=keys.map(k=>`<option value="${k}"${k===cur?' selected':''}>${k}</option>`).join('');
+  });
+}
+function getTotal(key,mgr){
+  return((S.months[key]?.rosters?.[mgr])||[]).reduce((s,p)=>s+(parseInt(p.hr)||0),0);
+}
+
+// ── PAGES ──
+function showPage(p){
+  currentPage=p;
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(x=>x.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  document.querySelector(`[onclick="showPage('${p}')"]`).classList.add('active');
+  populateSels();
+  if(p==='scores')renderScores();
+  if(p==='rosters')renderRosters();
+  if(p==='standings')renderStandings();
+  if(p==='history')renderHistory();
+  if(p==='settings')renderSettings();
+}
+
+// ── SYNC STATUS ──
+function setSyncUI(state,msg){
+  const d=document.getElementById('sync-dot');
+  const s=document.getElementById('sync-status');
+  if(d)d.className='sync-dot '+(state==='live'?'live':state==='loading'?'loading':state==='err'?'err':'');
+  if(s)s.textContent=msg;
+}
+
+// ── NAME NORMALIZATION ──
+function normName(n){return(n||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim();}
+function nameMatch(a,b){
+  const na=normName(a),nb=normName(b);
+  if(na===nb)return true;
+  const pa=na.split(' '),pb=nb.split(' ');
+  if(pa.length>=2&&pb.length>=2&&pa[0]===pb[0]&&pa[pa.length-1]===pb[pb.length-1])return true;
+  return false;
+}
+
+
+// ── SYNC (server-side, shared) ──
+// The ⟳ button triggers the sync on Netlify's servers; results are written to the
+// shared league data so EVERYONE sees the update. The same sync also runs
+// automatically at 5 PM & 11 PM Pacific via Netlify's scheduler — no open tabs needed.
+
+function logChange(player, delta, mgr, month, src){
+  if(!S.changeLog) S.changeLog = [];
+  S.changeLog.push({t: Date.now(), player, delta, mgr, month, src});
+  if(S.changeLog.length > 500) S.changeLog = S.changeLog.slice(-500);
+}
+
+async function syncNow(){
+  setSyncUI('loading','Syncing for everyone…');
+  try{
+    const r = await fetch(API_SYNC, {method:'POST'});
+    if(!r.ok) throw new Error('Sync '+r.status);
+    const res = await r.json();
+    await loadState();
+    const ts = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    if(res.ok === false) setSyncUI('err', res.error || 'Sync failed');
+    else if(res.failed && res.failed.length) setSyncUI('err', `Synced, ${res.failed.length} player(s) skipped (see console)`);
+    else setSyncUI('live', res.added > 0 ? `+${res.added} new HR for the league! · ${ts}` : `Up to date · ${ts}`);
+    if(res.failed && res.failed.length) console.warn('Skipped players:', res.failed.join(', '));
+    rerenderCurrent();
+  }catch(e){
+    console.error('Sync error:', e);
+    setSyncUI('err','Sync unavailable — needs the Netlify-hosted site');
+  }
+}
+
+// ── RENDER SCORES ──
+function renderScores(){
+  const key=getMonth();
+  if(!key||!S.months[key])return;
+  const sorted=[...S.managers].map(m=>({name:m,total:getTotal(key,m)})).sort((a,b)=>b.total-a.total);
+  const medals=['🥇','🥈','🥉',''];
+
+  document.getElementById('sc-summary').innerHTML=sorted.map((t,i)=>`
+    <div class="score-card${i===0&&t.total>0?' leading':''}">
+      ${medals[i]?`<div class="medal">${medals[i]}</div>`:''}
+      <div class="score-rank">${['1st','2nd','3rd','4th'][i]||''}</div>
+      <div class="score-name">${t.name}</div>
+      <div class="score-number">${t.total}</div>
+      <div class="score-label">Home Runs</div>
+    </div>`).join('');
+
+  document.getElementById('sc-grid').innerHTML=S.managers.map(mgr=>{
+    const roster=S.months[key].rosters[mgr]||[];
+    const total=roster.reduce((s,p)=>s+(parseInt(p.hr)||0),0);
+    const rows=roster.map((p,i)=>{
+      if(!p.player)return '';
+
+      const nk=normName(p.player);
+      const sh=(S.seasonHints||{})[nk];
+      const st=(S.streaks||{})[nk];
+      const streak=st===undefined?'':(st>=2?' <span title="'+st+' HR in the last 7 days — on fire!">🔥</span>':(st===0?' <span title="No HR in the last 7 days">🧊</span>':''));
+      const hint=sh!==undefined?`<div style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${sh} season</div>`:'';
+      return `<tr>
+        <td>${p.player}${streak}${hint}</td>
+        <td><span class="team-tag">${p.team||'—'}</span></td>
+        <td><span class="pos-tag">${p.position||'—'}</span></td>
+        <td style="text-align:right">
+          <input type="number" min="0" class="hr-input" value="${p.hr||0}" onchange="updateHR('${key}','${mgr}',${i},this.value)">
+        </td>
+      </tr>`;
+    }).join('');
+    return `<div class="roster-card">
+      <div class="roster-card-header">
+        <div class="roster-card-name">${mgr}</div>
+        <div class="roster-total">${total} HR</div>
+      </div>
+      <table class="roster-table">
+        <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th class="right">HR</th></tr></thead>
+        <tbody>${rows}
+          <tr class="total-row">
+            <td colspan="3" style="color:var(--text-muted)">Total</td>
+            <td style="text-align:right">${total}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+function updateHR(key,mgr,idx,val){
+  if(!S.months[key]?.rosters?.[mgr])return;
+  const slot=S.months[key].rosters[mgr][idx];
+  const before=parseInt(slot.hr)||0;
+  slot.hr=parseInt(val)||0;
+  const diff=slot.hr-before;
+  if(diff!==0&&slot.player)logChange(slot.player,diff,mgr,key,'manual');
+  save();renderScores();
+}
+
+// ── RENDER ROSTERS ──
+function renderRosters(){
+  const key=getMonth();
+  if(!key||!S.months[key]){document.getElementById('ro-grid').innerHTML='<p style="color:var(--chalk-faint)">Add a month to get started.</p>';return;}
+  const posOpts=p=>S.positions.map(x=>`<option value="${x}"${x===p?' selected':''}>${x}</option>`).join('');
+  document.getElementById('ro-grid').innerHTML=S.managers.map(mgr=>{
+    const roster=S.months[key].rosters[mgr]||[];
+    while(roster.length<6)roster.push({player:'',team:'',position:'',hr:0});
+    const rows=roster.map((slot,i)=>`<tr>
+      <td style="color:var(--text-faint);font-size:11px;font-family:'Roboto Mono',monospace">${i+1}</td>
+      <td><input class="edit-input" type="text" value="${slot.player||''}" placeholder="Player name" onchange="updateRoster('${key}','${mgr}',${i},'player',this.value)"></td>
+      <td><input class="edit-input" type="text" value="${slot.team||''}" placeholder="Team" style="width:60px" onchange="updateRoster('${key}','${mgr}',${i},'team',this.value)"></td>
+      <td><select class="edit-select" onchange="updateRoster('${key}','${mgr}',${i},'position',this.value)"><option value="">—</option>${posOpts(slot.position)}</select></td>
+    </tr>`).join('');
+    return `<div class="edit-card">
+      <div class="edit-card-header">${mgr}</div>
+      <table class="edit-table">
+        <thead><tr><th>#</th><th>Player</th><th>Team</th><th>Pos</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+function updateRoster(key,mgr,idx,field,val){
+  if(!S.months[key]?.rosters?.[mgr])return;
+  S.months[key].rosters[mgr][idx][field]=val;
+  save();
+}
+
+function addNextMonth(){
+  const keys=monthKeys();let m,y;
+  if(keys.length){const[lm,ly]=keys[keys.length-1].split('-');let mi=MONTHS.indexOf(lm)+1;y=parseInt(ly);if(mi>11){mi=0;y++;}m=mi;}
+  else{const n=new Date();m=n.getMonth();y=n.getFullYear();}
+  const key=`${MONTHS[m]}-${y}`;
+  if(S.months[key]){alert('That month already exists.');return;}
+  S.months[key]={rosters:{}};
+  S.managers.forEach(mgr=>{S.months[key].rosters[mgr]=Array(6).fill(null).map(()=>({player:'',team:'',position:'',hr:0}));});
+  S.currentMonth=key;save();populateSels();renderRosters();
+}
+
+// ── STANDINGS ──
+function renderStandings(){
+  const keys=monthKeys();
+  const season={};S.managers.forEach(m=>season[m]=0);
+  keys.forEach(k=>S.managers.forEach(m=>season[m]+=getTotal(k,m)));
+  const sorted=[...S.managers].sort((a,b)=>season[b]-season[a]);
+  const medals=['🥇','🥈','🥉','4th'];
+
+  let mHtml='<table class="data-table"><thead><tr><th>Month</th><th>Winner</th><th class="r">HR</th></tr></thead><tbody>';
+  if(!keys.length) mHtml+='<tr><td colspan="3" style="color:var(--text-faint)">No months yet.</td></tr>';
+  keys.forEach(k=>{
+    const s=[...S.managers].sort((a,b)=>getTotal(k,b)-getTotal(k,a));
+    const w=s[0],hrs=getTotal(k,w);
+    mHtml+=`<tr><td style="font-family:'Roboto Mono',monospace;font-size:12px">${k}</td><td>${hrs>0?`<span class="winner-badge">${w}</span>`:'—'}</td><td style="text-align:right;font-family:'Roboto Mono',monospace">${hrs}</td></tr>`;
+  });
+  mHtml+='</tbody></table>';
+  document.getElementById('st-monthly').innerHTML=mHtml;
+
+  let sHtml='<table class="data-table"><thead><tr><th>Manager</th><th class="r">Total HR</th><th class="r">Wins</th></tr></thead><tbody>';
+  sorted.forEach((m,i)=>{
+    const wins=keys.filter(k=>{const s=[...S.managers].sort((a,b)=>getTotal(k,b)-getTotal(k,a));return s[0]===m&&getTotal(k,m)>0;}).length;
+    sHtml+=`<tr><td><strong>${medals[i]||''} ${m}</strong></td><td style="text-align:right;font-family:'Roboto Mono',monospace;font-weight:600">${season[m]}</td><td style="text-align:right;font-family:'Roboto Mono',monospace">${wins}</td></tr>`;
+  });
+  sHtml+='</tbody></table>';
+  document.getElementById('st-season').innerHTML=sHtml;
+
+  let bHtml=`<table class="data-table"><thead><tr><th>Manager</th>${keys.map(k=>`<th class="r">${k.replace('-2026','').substring(0,3)}</th>`).join('')}<th class="r" style="border-left:1px solid var(--card-border)">Total</th></tr></thead><tbody>`;
+  sorted.forEach(m=>{
+    bHtml+=`<tr><td><strong>${m}</strong></td>`;
+    keys.forEach(k=>{
+      const t=getTotal(k,m),s=[...S.managers].sort((a,b)=>getTotal(k,b)-getTotal(k,a));
+      bHtml+=`<td style="text-align:right;font-family:'Roboto Mono',monospace">${s[0]===m&&t>0?'🏆 ':''}${t}</td>`;
+    });
+    bHtml+=`<td style="text-align:right;font-weight:600;font-family:'Roboto Mono',monospace;border-left:1px solid var(--card-border)">${season[m]}</td></tr>`;
+  });
+  bHtml+='</tbody></table>';
+  document.getElementById('st-breakdown').innerHTML=bHtml;
+}
+
+// ── HISTORY ──
+function renderHistory(){
+  const log=(S.changeLog||[]).slice().reverse();
+  let h='<table class="data-table"><thead><tr><th>When</th><th>Player</th><th>Change</th><th>Manager</th><th>Month</th><th>Source</th></tr></thead><tbody>';
+  if(!log.length){
+    h+='<tr><td colspan="6" style="color:var(--text-faint);padding:20px 14px">No changes recorded yet. New home runs found by the sync (and any manual edits) will appear here.</td></tr>';
+  }
+  log.forEach(e=>{
+    const d=new Date(e.t);
+    const when=d.toLocaleDateString([],{month:'short',day:'numeric'})+' · '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    const chg=(e.delta>0?'+':'')+e.delta+' HR';
+    const color=e.delta>0?'#1a7a3a':'var(--red)';
+    h+=`<tr>
+      <td style="font-family:'Roboto Mono',monospace;font-size:12px;white-space:nowrap">${when}</td>
+      <td><strong>${e.player}</strong></td>
+      <td style="font-family:'Roboto Mono',monospace;font-weight:600;color:${color}">${chg}${e.delta>0?' ⚾':''}</td>
+      <td>${e.mgr}</td>
+      <td style="font-family:'Roboto Mono',monospace;font-size:12px">${e.month}</td>
+      <td><span class="pos-tag">${e.src==='sync'?'auto sync':'manual edit'}</span></td>
+    </tr>`;
+  });
+  h+='</tbody></table>';
+  document.getElementById('hist-table').innerHTML=h;
+}
+
+// ── SETTINGS ──
+function renderSettings(){
+  document.getElementById('set-managers').innerHTML=S.managers.map(m=>`
+    <div class="flex" style="margin-bottom:8px">
+      <span style="font-size:14px;flex:1;color:var(--text-main)">${m}</span>
+      <button class="btn-dark danger" onclick="removeManager('${m}')">Remove</button>
+    </div>`).join('');
+  document.getElementById('set-positions').innerHTML=S.positions.map(p=>`
+    <span class="tag-pill">${p}<span class="rm" onclick="removePos('${p}')">×</span></span>`).join('');
+}
+function addManager(){const inp=document.getElementById('new-mgr'),n=inp.value.trim();if(!n||S.managers.includes(n))return;S.managers.push(n);Object.keys(S.months).forEach(k=>{if(!S.months[k].rosters[n])S.months[k].rosters[n]=Array(6).fill(null).map(()=>({player:'',team:'',position:'',hr:0}));});inp.value='';save();renderSettings();}
+function removeManager(n){if(S.managers.length<=1)return;S.managers=S.managers.filter(x=>x!==n);save();renderSettings();}
+function addPos(){const inp=document.getElementById('new-pos'),p=inp.value.trim().toUpperCase();if(!p||S.positions.includes(p))return;S.positions.push(p);inp.value='';save();renderSettings();}
+function removePos(p){S.positions=S.positions.filter(x=>x!==p);save();renderSettings();}
+
+// ── INIT ──
+
+// ── INIT ──
+let currentPage = 'scores';
+function rerenderCurrent(){ showPage(currentPage); }
+
+async function init(){
+  // Paint immediately with the built-in baseline, then swap in the shared state.
+  populateSels(); renderScores(); renderSettings();
+  setSyncUI('loading','Loading league data…');
+  const ok = await loadState();
+  populateSels(); renderScores(); renderSettings();
+  if(ok){
+    const last = S.lastSync
+      ? new Date(S.lastSync).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+      : null;
+    setSyncUI('live', last ? `Shared · last sync ${last}` : 'Shared · not synced yet');
+  }else{
+    setSyncUI('err','Offline preview — shared data needs the Netlify site');
+  }
+  // Refresh from the shared state every 60s so everyone stays in step.
+  setInterval(async () => {
+    if(document.hidden) return;
+    const el = document.activeElement;
+    if(el && (el.tagName === 'INPUT' || el.tagName === 'SELECT')) return; // don't clobber typing
+    const ok2 = await loadState();
+    if(ok2) rerenderCurrent();
+  }, 60000);
+}
+init();
+</script>
+</body>
+</html>
