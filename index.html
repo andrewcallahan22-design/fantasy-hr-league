@@ -147,6 +147,49 @@
   .tag-pill { display: inline-flex; align-items: center; gap: 5px; background: #e8f4ec; color: var(--green-field); font-family: 'Roboto Mono', monospace; font-size: 12px; padding: 3px 10px; border-radius: 20px; border: 1px solid #c0dfc9; }
   .tag-pill .rm { cursor: pointer; color: var(--text-faint); font-size: 14px; line-height: 1; margin-left: 1px; }
   .tag-pill .rm:hover { color: var(--red); }
+
+  /* AUTH MODAL */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(10,31,18,.85); z-index: 200; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--card-bg); color: var(--text-main); border-radius: var(--radius); width: 100%; max-width: 380px; overflow: hidden; }
+  .modal-header { background: var(--green-deep); color: var(--chalk); padding: 14px 20px; font-family: 'Oswald', sans-serif; font-size: 17px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; display: flex; justify-content: space-between; align-items: center; }
+  .modal-close { cursor: pointer; color: var(--chalk-dim); font-size: 20px; line-height: 1; background: none; border: none; padding: 0; }
+  .modal-body { padding: 20px; }
+  .modal-tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); }
+  .modal-tab { flex: 1; padding: 8px; font-family: 'Oswald', sans-serif; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); cursor: pointer; }
+  .modal-tab.active { color: var(--green-field); border-bottom-color: var(--green-field); font-weight: 600; }
+  .modal-field { margin-bottom: 12px; }
+  .modal-field label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .modal-field input, .modal-field select { width: 100%; padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 6px; font-size: 14px; font-family: 'Inter', sans-serif; background: #fafafa; }
+  .modal-field input:focus, .modal-field select:focus { outline: none; border-color: var(--green-mid); }
+  .modal-error { color: var(--red); font-size: 12px; margin-bottom: 10px; min-height: 16px; }
+  .modal-submit { width: 100%; padding: 10px; background: var(--green-field); color: var(--chalk); border: none; border-radius: 6px; font-family: 'Oswald', sans-serif; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
+  .modal-submit:hover { background: var(--green-mid); }
+  .account-chip { font-family: 'Oswald', sans-serif; font-size: 12px; color: var(--amber); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+
+  /* DRAFT BOARD */
+  .clock-banner { background: var(--scoreboard); border: 1px solid var(--green-mid); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  .clock-banner.my-turn { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+  .clock-label { font-family: 'Oswald', sans-serif; font-size: 13px; color: var(--chalk-faint); text-transform: uppercase; letter-spacing: .1em; }
+  .clock-name { font-family: 'Oswald', sans-serif; font-size: 26px; font-weight: 700; color: var(--amber); text-transform: uppercase; }
+  .order-strip { display: flex; gap: 8px; flex-wrap: wrap; }
+  .order-pill { font-family: 'Roboto Mono', monospace; font-size: 11px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--green-mid); color: var(--chalk-dim); }
+  .order-pill.on-clock { background: var(--amber); color: var(--green-deep); border-color: var(--amber); font-weight: 600; }
+  .draft-grid { display: grid; grid-template-columns: 320px 1fr; gap: 16px; }
+  @media(max-width:800px){ .draft-grid { grid-template-columns: 1fr; } }
+  .pos-chip { display: inline-block; font-family: 'Roboto Mono', monospace; font-size: 11px; padding: 3px 9px; border-radius: 4px; margin: 2px; }
+  .pos-chip.filled { background: #e8f4ec; color: var(--green-field); border: 1px solid #c0dfc9; }
+  .pos-chip.open { background: #faf8f2; color: var(--text-faint); border: 1px dashed var(--card-border); }
+  .team-chip { display: inline-block; font-family: 'Roboto Mono', monospace; font-size: 10px; padding: 2px 7px; border-radius: 4px; margin: 2px; background: #f5f2ea; color: var(--text-faint); text-decoration: line-through; }
+  .slot-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #f0ede4; font-size: 13px; }
+  .slot-row:last-child { border-bottom: none; }
+  .slot-num { font-family: 'Roboto Mono', monospace; font-size: 11px; color: var(--text-faint); width: 16px; }
+  .slot-empty { color: var(--text-faint); font-style: italic; }
+  .draft-btn { font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 4px 12px; border-radius: 5px; border: none; background: var(--green-field); color: var(--chalk); cursor: pointer; }
+  .draft-btn:hover { background: var(--green-mid); }
+  .draft-btn:disabled { background: #d8d5cc; color: #999; cursor: not-allowed; }
+  .pool-filter { width: 100%; max-width: 260px; padding: 7px 11px; border: 1px solid var(--card-border); border-radius: 6px; font-size: 13px; margin-bottom: 10px; background: #fafafa; }
+  .hr-input:disabled, .edit-input:disabled, .edit-select:disabled { opacity: .45; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -160,11 +203,14 @@
     <div class="sync-dot" id="sync-dot"></div>
     <span id="sync-status">—</span>
     <button class="btn sm" onclick="syncNow()">⟳ Sync</button>
+    <span class="account-chip" id="account-chip"></span>
+    <button class="btn sm" id="account-btn" onclick="accountAction()">Sign in</button>
   </div>
 </header>
 
 <nav class="nav">
   <button class="nav-btn active" onclick="showPage('scores')">Scores</button>
+  <button class="nav-btn" onclick="showPage('draft')">Draft</button>
   <button class="nav-btn" onclick="showPage('rosters')">Edit Rosters</button>
   <button class="nav-btn" onclick="showPage('standings')">Standings</button>
   <button class="nav-btn" onclick="showPage('history')">History</button>
@@ -212,6 +258,14 @@
   </div>
 </div>
 
+<!-- DRAFT -->
+<div id="page-draft" class="page">
+  <div class="container">
+    <div class="page-heading">Monthly Draft</div>
+    <div id="draft-content"><p style="color:var(--chalk-faint);font-size:14px">Loading draft…</p></div>
+  </div>
+</div>
+
 <!-- HISTORY -->
 <div id="page-history" class="page">
   <div class="container">
@@ -254,6 +308,36 @@
   </div>
 </div>
 
+
+<!-- AUTH MODAL -->
+<div class="modal-overlay" id="auth-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span>Manager Access</span>
+      <button class="modal-close" onclick="closeAuthModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-tabs">
+        <button class="modal-tab active" id="tab-login" onclick="setAuthMode('login')">Sign In</button>
+        <button class="modal-tab" id="tab-signup" onclick="setAuthMode('signup')">Claim Your Team</button>
+      </div>
+      <div class="modal-error" id="auth-error"></div>
+      <div class="modal-field" id="field-manager" style="display:none">
+        <label>Your team</label>
+        <select id="auth-manager"></select>
+      </div>
+      <div class="modal-field">
+        <label>Email</label>
+        <input type="email" id="auth-email" autocomplete="email">
+      </div>
+      <div class="modal-field">
+        <label>Password <span id="pw-hint" style="display:none;color:var(--text-faint)">(6+ characters)</span></label>
+        <input type="password" id="auth-password" autocomplete="current-password">
+      </div>
+      <button class="modal-submit" id="auth-submit" onclick="submitAuth()">Sign In</button>
+    </div>
+  </div>
+</div>
 <script>
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -290,8 +374,87 @@ const INIT={
 let S, autoSyncTimer=null;
 
 
-const API_DATA = '/.netlify/functions/data';
-const API_SYNC = '/.netlify/functions/run-sync';
+const API_DATA  = '/.netlify/functions/data';
+const API_SYNC  = '/.netlify/functions/run-sync';
+const API_AUTH  = '/.netlify/functions/auth';
+const API_DRAFT = '/.netlify/functions/draft';
+
+// ── SESSION (per-device sign-in) ──
+let SESSION = null;
+try { SESSION = JSON.parse(localStorage.getItem('fhr_session')) || null; } catch(e){}
+
+function setSession(s){
+  SESSION = s;
+  if (s) localStorage.setItem('fhr_session', JSON.stringify(s));
+  else localStorage.removeItem('fhr_session');
+  renderAccount();
+}
+function authHeaders(){ return SESSION ? { 'Authorization': 'Bearer ' + SESSION.token } : {}; }
+function canEdit(mgr){ return !!SESSION && SESSION.manager === mgr; }
+
+function renderAccount(){
+  const chip = document.getElementById('account-chip');
+  const btn  = document.getElementById('account-btn');
+  if (!chip || !btn) return;
+  if (SESSION){ chip.textContent = SESSION.manager; btn.textContent = 'Sign out'; }
+  else { chip.textContent = ''; btn.textContent = 'Sign in'; }
+}
+function accountAction(){
+  if (SESSION){
+    fetch(API_AUTH, {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body: JSON.stringify({action:'logout'})}).catch(()=>{});
+    setSession(null);
+    rerenderCurrent();
+  } else openAuthModal();
+}
+
+// ── AUTH MODAL ──
+let authMode = 'login';
+function openAuthModal(){
+  document.getElementById('auth-modal').classList.add('open');
+  document.getElementById('auth-error').textContent = '';
+  setAuthMode('login');
+}
+function closeAuthModal(){ document.getElementById('auth-modal').classList.remove('open'); }
+async function setAuthMode(mode){
+  authMode = mode;
+  document.getElementById('tab-login').classList.toggle('active', mode === 'login');
+  document.getElementById('tab-signup').classList.toggle('active', mode === 'signup');
+  document.getElementById('field-manager').style.display = mode === 'signup' ? 'block' : 'none';
+  document.getElementById('pw-hint').style.display = mode === 'signup' ? 'inline' : 'none';
+  document.getElementById('auth-submit').textContent = mode === 'signup' ? 'Claim Team' : 'Sign In';
+  document.getElementById('auth-error').textContent = '';
+  if (mode === 'signup'){
+    try{
+      const info = await (await fetch(API_AUTH)).json();
+      const open = info.managers.filter(m => !info.claimed.includes(m));
+      const sel = document.getElementById('auth-manager');
+      sel.innerHTML = open.length
+        ? open.map(m => `<option value="${m}">${m}</option>`).join('')
+        : '<option value="">All teams claimed — sign in instead</option>';
+    }catch(e){
+      document.getElementById('auth-error').textContent = 'Needs the hosted site to sign up';
+    }
+  }
+}
+async function submitAuth(){
+  const errEl = document.getElementById('auth-error');
+  errEl.textContent = '';
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const body = authMode === 'signup'
+    ? { action:'signup', email, password, manager: document.getElementById('auth-manager').value }
+    : { action:'login', email, password };
+  try{
+    const r = await fetch(API_AUTH, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const res = await r.json();
+    if (!res.ok){ errEl.textContent = res.error || 'Something went wrong'; return; }
+    setSession({ token: res.token, manager: res.manager, email: res.email });
+    closeAuthModal();
+    rerenderCurrent();
+  }catch(e){
+    errEl.textContent = 'Connection failed — auth needs the hosted site';
+  }
+}
 
 let saveTimer = null;
 function save(){
@@ -299,7 +462,8 @@ function save(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try{
-      const r = await fetch(API_DATA, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(S)});
+      const r = await fetch(API_DATA, {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body: JSON.stringify(S)});
+      if(r.status === 401){ setSyncUI('err','Sign in to save changes'); openAuthModal(); return; }
       if(!r.ok) throw new Error(r.status);
     }catch(e){
       console.warn('Save failed:', e);
@@ -353,6 +517,7 @@ function showPage(p){
   if(p==='scores')renderScores();
   if(p==='rosters')renderRosters();
   if(p==='standings')renderStandings();
+  if(p==='draft')renderDraft();
   if(p==='history')renderHistory();
   if(p==='settings')renderSettings();
 }
@@ -438,7 +603,7 @@ function renderScores(){
         <td><span class="team-tag">${p.team||'—'}</span></td>
         <td><span class="pos-tag">${p.position||'—'}</span></td>
         <td style="text-align:right">
-          <input type="number" min="0" class="hr-input" value="${p.hr||0}" onchange="updateHR('${key}','${mgr}',${i},this.value)">
+          <input type="number" min="0" class="hr-input" value="${p.hr||0}" ${canEdit(mgr)?'':'disabled title="Sign in as '+mgr+' to edit"'} onchange="updateHR('${key}','${mgr}',${i},this.value)">
         </td>
       </tr>`;
     }).join('');
@@ -480,9 +645,9 @@ function renderRosters(){
     while(roster.length<6)roster.push({player:'',team:'',position:'',hr:0});
     const rows=roster.map((slot,i)=>`<tr>
       <td style="color:var(--text-faint);font-size:11px;font-family:'Roboto Mono',monospace">${i+1}</td>
-      <td><input class="edit-input" type="text" value="${slot.player||''}" placeholder="Player name" onchange="updateRoster('${key}','${mgr}',${i},'player',this.value)"></td>
-      <td><input class="edit-input" type="text" value="${slot.team||''}" placeholder="Team" style="width:60px" onchange="updateRoster('${key}','${mgr}',${i},'team',this.value)"></td>
-      <td><select class="edit-select" onchange="updateRoster('${key}','${mgr}',${i},'position',this.value)"><option value="">—</option>${posOpts(slot.position)}</select></td>
+      <td><input class="edit-input" type="text" value="${slot.player||''}" placeholder="Player name" ${canEdit(mgr)?'':'disabled'} onchange="updateRoster('${key}','${mgr}',${i},'player',this.value)"></td>
+      <td><input class="edit-input" type="text" value="${slot.team||''}" placeholder="Team" style="width:60px" ${canEdit(mgr)?'':'disabled'} onchange="updateRoster('${key}','${mgr}',${i},'team',this.value)"></td>
+      <td><select class="edit-select" ${canEdit(mgr)?'':'disabled'} onchange="updateRoster('${key}','${mgr}',${i},'position',this.value)"><option value="">—</option>${posOpts(slot.position)}</select></td>
     </tr>`).join('');
     return `<div class="edit-card">
       <div class="edit-card-header">${mgr}</div>
@@ -550,6 +715,188 @@ function renderStandings(){
   document.getElementById('st-breakdown').innerHTML=bHtml;
 }
 
+
+// ── DRAFT PORTAL ──
+let DRAFT_VIEW = null;
+let poolFilter = '';
+
+async function renderDraft(){
+  const el = document.getElementById('draft-content');
+  try{
+    const r = await fetch(API_DRAFT, { headers: authHeaders() });
+    DRAFT_VIEW = await r.json();
+  }catch(e){
+    el.innerHTML = '<div class="panel"><div class="panel-header">Draft</div><div style="padding:16px;font-size:13px;color:var(--text-muted)">Draft portal needs the hosted site.</div></div>';
+    return;
+  }
+  const D = DRAFT_VIEW;
+  const d = D.draft;
+
+  // ── No active draft ──
+  if (!d || d.status !== 'active'){
+    let html = '<div class="panel"><div class="panel-header">No Draft In Progress</div><div style="padding:18px">';
+    if (d && d.status === 'complete'){
+      html += `<p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">Last draft: <strong>${d.month}</strong> — completed ${new Date(d.completedAt).toLocaleDateString()}. Rosters are live on the Scores tab.</p>`;
+    }
+    if (SESSION){
+      html += `<p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Opening a draft sets the pick order to the <strong>reverse of last month's standings</strong> — lowest HR total picks first, same order every round. Picks are casual: take your turn whenever.</p>
+      <button class="modal-submit" style="max-width:260px" onclick="openDraft()">Open next month's draft</button>`;
+    } else {
+      html += `<p style="font-size:13px;color:var(--text-muted)">Sign in to open the next draft.</p>`;
+    }
+    html += '</div></div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  // ── Active draft ──
+  const myTurn = SESSION && D.onClock === SESSION.manager;
+  const totalPicks = d.order.length * 6;
+  const myPicks = SESSION ? d.picks.filter(p => p.mgr === SESSION.manager) : [];
+  const myTeams = myPicks.map(p => p.team);
+  const myPositions = myPicks.map(p => p.pos);
+  const posCounts = {};
+  myPositions.forEach(p => posCounts[p] = (posCounts[p]||0)+1);
+  const hasDup = Object.values(posCounts).some(c => c >= 2);
+  const lastPick = d.picks[d.picks.length - 1];
+
+  let html = `
+  <div class="clock-banner${myTurn ? ' my-turn' : ''}">
+    <div>
+      <div class="clock-label">${d.month} Draft · Round ${D.round} of 6 · Pick ${d.picks.length + 1} of ${totalPicks}</div>
+      <div class="clock-name">${myTurn ? '🎯 Your pick!' : 'On the clock: ' + D.onClock}</div>
+    </div>
+    <div class="order-strip">
+      ${d.order.map(m => `<span class="order-pill${m === D.onClock ? ' on-clock' : ''}">${m} · ${d.picks.filter(p=>p.mgr===m).length}/6</span>`).join('')}
+    </div>
+  </div>
+  <div class="draft-grid">
+    <div>`;
+
+  // My roster panel
+  if (SESSION){
+    html += `<div class="panel" style="margin-bottom:16px">
+      <div class="panel-header">My Roster — ${SESSION.manager}</div>
+      <div style="padding:12px 16px">`;
+    for (let i = 0; i < 6; i++){
+      const p = myPicks[i];
+      html += `<div class="slot-row"><span class="slot-num">${i+1}</span>` +
+        (p ? `<strong>${p.player}</strong> <span class="team-tag">${p.team}</span> <span class="pos-tag">${p.pos}</span>`
+           : `<span class="slot-empty">— open —</span>`) + `</div>`;
+    }
+    const allPos = S.positions || [];
+    html += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">Positions</div><div style="margin-top:4px">`;
+    allPos.forEach(pos => {
+      const c = posCounts[pos] || 0;
+      if (c > 0) html += `<span class="pos-chip filled">${pos}${c > 1 ? ' ×2' : ''}</span>`;
+      else html += `<span class="pos-chip open">${pos}</span>`;
+    });
+    html += `</div>
+      <div style="margin-top:8px;font-size:11px;color:${hasDup ? 'var(--red)' : 'var(--text-faint)'}">
+        ${hasDup ? '⚠ Duplicate position used — all remaining picks must be new positions' : '✓ One duplicate position still available'}
+      </div>
+    </div></div>`;
+  } else {
+    html += `<div class="panel" style="margin-bottom:16px"><div class="panel-header">My Roster</div>
+      <div style="padding:16px;font-size:13px;color:var(--text-muted)">Sign in to see your roster and make picks.</div></div>`;
+  }
+
+  // Taken teams panel
+  html += `<div class="panel"><div class="panel-header">Teams Taken (${D.takenTeams.length}/30)</div>
+    <div style="padding:12px 16px">${D.takenTeams.length ? D.takenTeams.map(t => `<span class="team-chip">${t}</span>`).join('') : '<span style="font-size:12px;color:var(--text-faint)">None yet</span>'}</div></div>`;
+
+  // Recent picks
+  html += `<div class="panel" style="margin-top:16px"><div class="panel-header">Picks So Far</div><div style="padding:6px 16px;max-height:300px;overflow-y:auto">`;
+  if (!d.picks.length) html += '<p style="font-size:12px;color:var(--text-faint);padding:8px 0">No picks yet.</p>';
+  [...d.picks].reverse().forEach((p, idx) => {
+    html += `<div class="slot-row"><span class="slot-num">${d.picks.length - idx}</span><strong>${p.player}</strong> <span class="team-tag">${p.team}</span> <span class="pos-tag">${p.pos}</span> <span style="margin-left:auto;font-size:11px;color:var(--text-faint)">${p.mgr}</span></div>`;
+  });
+  html += `</div></div>`;
+  if (SESSION && lastPick && lastPick.mgr === SESSION.manager){
+    html += `<button class="btn-dark danger" style="margin-top:10px" onclick="undoPick()">Undo my last pick</button>`;
+  }
+  html += `</div><div>`;
+
+  // Available players board
+  html += `<div class="panel"><div class="panel-header">Best Available — Top HR Hitters</div><div style="padding:12px 16px">`;
+  if (D.poolError) html += `<p style="font-size:12px;color:var(--red);margin-bottom:8px">Player pool unavailable: ${D.poolError}</p>`;
+  html += `<input class="pool-filter" placeholder="Search players…" value="${poolFilter}" oninput="poolFilter=this.value;renderDraftPool()">
+    <div id="draft-pool"></div></div></div>`;
+
+  html += `</div></div>`;
+  el.innerHTML = html;
+  renderDraftPool();
+}
+
+function renderDraftPool(){
+  const el = document.getElementById('draft-pool');
+  if (!el || !DRAFT_VIEW) return;
+  const D = DRAFT_VIEW;
+  const myTurn = SESSION && D.onClock === SESSION.manager;
+  const f = poolFilter.toLowerCase();
+  const rows = (D.pool || [])
+    .filter(p => !f || p.name.toLowerCase().includes(f))
+    .slice(0, 60);
+
+  let html = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Pos</th><th class="r">HR</th><th></th></tr></thead><tbody>`;
+  if (!rows.length) html += '<tr><td colspan="6" style="color:var(--text-faint)">No players match.</td></tr>';
+  rows.forEach((p, i) => {
+    const teamTaken = D.takenTeams.includes(p.team);
+    const posOpts = (S.positions || []).map(x => `<option value="${x}"${x === p.pos ? ' selected' : ''}>${x}</option>`).join('');
+    const disabled = !myTurn || teamTaken;
+    const reason = teamTaken ? `${p.team} taken` : (!SESSION ? 'Sign in' : (!myTurn ? 'Not your turn' : ''));
+    html += `<tr style="${teamTaken ? 'opacity:.45' : ''}">
+      <td style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-faint)">${p.rank || i+1}</td>
+      <td><strong>${p.name}</strong></td>
+      <td><span class="team-tag">${p.team}</span></td>
+      <td><select class="edit-select" id="pos-${i}" ${disabled ? 'disabled' : ''}>${posOpts || '<option>DH</option>'}</select></td>
+      <td style="text-align:right;font-family:'Roboto Mono',monospace;font-weight:600">${p.hr}</td>
+      <td style="text-align:right">${disabled
+        ? `<span style="font-size:10px;color:var(--text-faint)">${reason}</span>`
+        : `<button class="draft-btn" onclick="makePick(${i})">Draft</button>`}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  el._rows = rows;
+}
+
+async function openDraft(){
+  try{
+    const r = await fetch(API_DRAFT, {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body: JSON.stringify({action:'open'})});
+    const res = await r.json();
+    if (!res.ok){ alert(res.error || 'Could not open draft'); return; }
+    renderDraft();
+  }catch(e){ alert('Connection failed'); }
+}
+
+async function makePick(rowIdx){
+  const el = document.getElementById('draft-pool');
+  const p = el?._rows?.[rowIdx];
+  if (!p) return;
+  const pos = document.getElementById('pos-' + rowIdx)?.value || p.pos || 'DH';
+  try{
+    const r = await fetch(API_DRAFT, {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({action:'pick', pick:{player:p.name, team:p.team, pos, hr:p.hr}})});
+    const res = await r.json();
+    if (!res.ok){ alert(res.error || 'Pick rejected'); return; }
+    if (res.draft && res.draft.status === 'complete'){
+      await loadState();
+      alert(`Draft complete! ${res.draft.month} rosters are live — first sync will anchor everyone's baselines.`);
+    }
+    renderDraft();
+  }catch(e){ alert('Connection failed'); }
+}
+
+async function undoPick(){
+  try{
+    const r = await fetch(API_DRAFT, {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body: JSON.stringify({action:'undo'})});
+    const res = await r.json();
+    if (!res.ok){ alert(res.error || 'Undo rejected'); return; }
+    renderDraft();
+  }catch(e){ alert('Connection failed'); }
+}
+
 // ── HISTORY ──
 function renderHistory(){
   const log=(S.changeLog||[]).slice().reverse();
@@ -598,6 +945,7 @@ function rerenderCurrent(){ showPage(currentPage); }
 
 async function init(){
   // Paint immediately with the built-in baseline, then swap in the shared state.
+  renderAccount();
   populateSels(); renderScores(); renderSettings();
   setSyncUI('loading','Loading league data…');
   const ok = await loadState();

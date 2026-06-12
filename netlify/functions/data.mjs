@@ -1,7 +1,8 @@
 // Shared league data endpoint.
-// GET  -> returns the league state everyone shares (seeds it on first ever call)
-// POST -> saves the league state (manual HR edits, roster changes, settings)
+// GET  -> league state (public read — anyone with the link can view standings)
+// POST -> save state (requires sign-in; edits are for logged-in managers)
 import { loadLeagueState, saveLeagueState } from './lib/core.mjs';
+import { verifyAuth } from './lib/auth.mjs';
 
 export default async (req) => {
   if (req.method === 'GET') {
@@ -9,7 +10,11 @@ export default async (req) => {
     return Response.json(state);
   }
   if (req.method === 'POST') {
-    const body = await req.json();
+    const session = await verifyAuth(req);
+    if (!session) {
+      return Response.json({ ok: false, error: 'Sign in required to save changes' }, { status: 401 });
+    }
+    const body = await req.json().catch(() => null);
     if (!body || !body.managers || !body.months) {
       return Response.json({ ok: false, error: 'Invalid state payload' }, { status: 400 });
     }

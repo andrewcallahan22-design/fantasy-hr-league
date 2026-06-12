@@ -1,35 +1,38 @@
-# Fantasy HR League — Shared Scoreboard
+# Fantasy HR League — Shared Scoreboard + Draft Portal
 
-One shared scoreboard for the whole league. Data lives on the server, every
-manager sees the same numbers, and the sync runs automatically at 5 PM and
-11 PM Pacific on Netlify's servers — nobody needs to keep the page open.
+## What's new in this version
+- **Manager logins** (email + password). Each manager claims their team once via
+  "Claim Your Team"; after that it's sign-in only. You can only edit your own roster.
+- **Monthly Draft tab**: open next month's draft, pick order = reverse of last
+  month's standings (lowest total picks first, same order every round), casual
+  picks with no clock. Shows your roster slots, filled/open positions (one
+  duplicate allowed), MLB teams already taken league-wide, and a live
+  "best available" top-HR board from the official MLB API. All league rules are
+  enforced server-side; when the 24th pick lands, the new month's rosters are
+  created automatically.
+- Viewing is public (no login needed to check standings); editing and drafting
+  require sign-in.
 
-## What's in here
-- `index.html` — the scoreboard app
-- `netlify/functions/data.mjs` — shared league data (GET/POST)
-- `netlify/functions/run-sync.mjs` — manual ⟳ Sync trigger (updates everyone)
-- `netlify/functions/scheduled-sync.mjs` — the 5 PM / 11 PM automatic sync
-- `netlify/functions/lib/core.mjs` — sync logic (official MLB Stats API, delta tracking)
-- `netlify/functions/lib/initial-state.mjs` — your league's starting data (June 10 baseline)
-- `netlify.toml` — schedule + functions config
-- `package.json` — one dependency (@netlify/blobs, Netlify's built-in storage)
+## Upgrading your existing site
+Your league data is stored separately from the code, so this upgrade does NOT
+touch your rosters, HR counts, or history.
 
-## Deploy (one-time, ~10 minutes)
-Scheduled functions need a Git-connected deploy (drag-and-drop won't run them):
+1. Go to your GitHub repository
+2. "Add file → Upload files" and drag in everything from this package,
+   keeping the folder structure (GitHub overwrites files with the same names)
+3. Commit — Netlify redeploys automatically in ~1 minute
 
-1. Create a free account at github.com (if you don't have one)
-2. Create a new repository, e.g. `fantasy-hr-league`
-3. Click "uploading an existing file" and upload ALL files/folders from this
-   package, keeping the folder structure (netlify/functions/lib/...)
-4. In Netlify: **Add new site → Import an existing project → GitHub** and pick
-   your repo. Build settings are auto-detected from netlify.toml — just Deploy.
-5. Your site goes live at your-site-name.netlify.app — share that link
+## First steps after deploying
+1. Each manager visits the site → "Sign in" → "Claim Your Team" → picks their
+   name, enters email + password (6+ chars)
+2. When July rolls around, anyone signed in hits Draft → "Open next month's draft"
+3. Take turns picking — the page shows whose turn it is; refresh or wait for the
+   60-second auto-refresh to see new picks
+4. After the last pick, run a ⟳ Sync once to anchor baselines for the new month
 
 ## Notes
-- The cron schedule is in UTC: `0 0,6 * * *` = 5 PM & 11 PM Pacific Daylight
-  Time. When clocks fall back in November, change it to `0 1,7 * * *` in
-  netlify.toml to stay at 5/11 PM.
-- The ⟳ Sync button runs the same server-side sync immediately — one click
-  updates the scoreboard for everyone.
-- Anyone with the link can edit rosters and HR numbers (it's a friends league —
-  there's no login). The History tab logs every change.
+- Forgot password: there's no self-service reset (kept simple). Quick fix:
+  ask here and you'll get a tiny admin script; or delete the 'users' blob in
+  Netlify (Site → Blobs) and everyone re-claims.
+- Cron schedule is UTC: "0 0,6 * * *" = 5 PM & 11 PM PDT. After clocks change
+  in November, edit netlify.toml to "0 1,7 * * *" to stay at 5/11 PM.
