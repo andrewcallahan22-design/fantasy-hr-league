@@ -6,6 +6,15 @@ import { getStore } from '@netlify/blobs';
 
 const store = () => getStore('league');
 
+// Admin emails — these accounts can edit any manager's roster.
+// Compare lowercase.
+export const ADMIN_EMAILS = new Set([
+  'andrewcallahan22@gmail.com',
+]);
+export function isAdminEmail(email) {
+  return !!email && ADMIN_EMAILS.has(String(email).toLowerCase().trim());
+}
+
 export async function getUsers() {
   return (await store().get('users', { type: 'json' })) || {};
 }
@@ -31,7 +40,7 @@ export async function createSession(email, manager) {
     if (s.exp < now) delete sessions[t];
   }
   const token = crypto.randomBytes(32).toString('hex');
-  sessions[token] = { email, manager, exp: now + 30 * 86400000 };
+  sessions[token] = { email, manager, isAdmin: isAdminEmail(email), exp: now + 30 * 86400000 };
   await saveSessions(sessions);
   return token;
 }
@@ -52,5 +61,7 @@ export async function verifyAuth(req) {
   const sessions = await getSessions();
   const s = sessions[token];
   if (!s || s.exp < Date.now()) return null;
-  return { ...s, token };
+  // Re-evaluate admin status on every check so newly-tagged admins
+  // get the privilege without having to sign back in.
+  return { ...s, isAdmin: isAdminEmail(s.email), token };
 }

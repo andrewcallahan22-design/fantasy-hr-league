@@ -4,7 +4,7 @@
 //   signup: each league manager (Max/Johnny/HK/Cali) can be claimed exactly once
 //   with an email + password. After that, it's login-only for that manager.
 import crypto from 'node:crypto';
-import { getUsers, saveUsers, hashPassword, createSession, destroySession, verifyAuth } from './lib/auth.mjs';
+import { getUsers, saveUsers, hashPassword, createSession, destroySession, verifyAuth, isAdminEmail } from './lib/auth.mjs';
 import { loadLeagueState } from './lib/core.mjs';
 
 export default async (req) => {
@@ -16,7 +16,7 @@ export default async (req) => {
     return Response.json({
       managers: state.managers,
       claimed,
-      me: session ? { manager: session.manager, email: session.email } : null,
+      me: session ? { manager: session.manager, email: session.email, isAdmin: session.isAdmin } : null,
     });
   }
 
@@ -45,7 +45,7 @@ export default async (req) => {
     users[email] = { email, manager, salt, hash: hashPassword(password, salt), createdAt: Date.now() };
     await saveUsers(users);
     const token = await createSession(email, manager);
-    return Response.json({ ok: true, token, manager, email });
+    return Response.json({ ok: true, token, manager, email, isAdmin: isAdminEmail(email) });
   }
 
   if (body.action === 'login') {
@@ -56,7 +56,7 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Wrong email or password' }, { status: 401 });
     }
     const token = await createSession(u.email, u.manager);
-    return Response.json({ ok: true, token, manager: u.manager, email: u.email });
+    return Response.json({ ok: true, token, manager: u.manager, email: u.email, isAdmin: isAdminEmail(u.email) });
   }
 
   if (body.action === 'logout') {
