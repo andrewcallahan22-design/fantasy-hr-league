@@ -313,6 +313,13 @@
       <p style="font-size:13px;color:var(--text-main);background:#e8f4ec;border:1px solid #c0dfc9;border-radius:6px;padding:10px 12px">
         ✓ Auto-sync runs on the server at <strong>5 PM</strong> and <strong>11 PM</strong> Pacific — nobody needs to keep the page open. The ⟳ Sync button triggers it immediately for the whole league.
       </p>
+      <div class="settings-divider"></div>
+      <h3>Diagnostics</h3>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">
+        For every rostered player, shows: roster HR vs. server baseline, last known season total, and how many History entries the system has logged for them. Use this when you see History updating but Scores not changing.
+      </p>
+      <button class="btn-dark" onclick="loadDiagnostics()">Run diagnostics</button>
+      <div id="diag-output" style="margin-top:14px"></div>
     </div>
   </div>
 </div>
@@ -496,6 +503,20 @@ async function loadState(){
     const r = await fetch(API_DATA, { cache: 'no-store' });
     if(!r.ok) throw new Error(r.status);
     S = await r.json();
+    // Stamp each roster slot with the HR value we loaded — the server uses this
+    // to tell whether a subsequent save is a real edit or stale data trying to
+    // overwrite a fresh sync. Cleared automatically when slot.hr is changed.
+    if (S.months) {
+      for (const m of Object.values(S.months)) {
+        if (!m.rosters) continue;
+        for (const roster of Object.values(m.rosters)) {
+          if (!Array.isArray(roster)) continue;
+          for (const slot of roster) {
+            slot._baseHr = parseInt(slot.hr) || 0;
+          }
+        }
+      }
+    }
     return true;
   }catch(e){
     console.warn('League server unreachable, using built-in baseline:', e);
@@ -955,6 +976,42 @@ function addManager(){const inp=document.getElementById('new-mgr'),n=inp.value.t
 function removeManager(n){if(S.managers.length<=1)return;S.managers=S.managers.filter(x=>x!==n);save();renderSettings();}
 function addPos(){const inp=document.getElementById('new-pos'),p=inp.value.trim().toUpperCase();if(!p||S.positions.includes(p))return;S.positions.push(p);inp.value='';save();renderSettings();}
 function removePos(p){S.positions=S.positions.filter(x=>x!==p);save();renderSettings();}
+
+async function loadDiagnostics(){
+  const out = document.getElementById('diag-output');
+  out.innerHTML = '<p style="font-size:13px;color:var(--text-muted)">Loading…</p>';
+  try{
+    const r = await fetch('/.netlify/functions/diag', { cache: 'no-store' });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    let html = `<p style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Month: <strong>${d.currentMonth}</strong> · Last sync: ${d.lastSync || 'never'} · Total history entries: ${d.totalHistoryEntries}</p>`;
+    html += '<div style="overflow-x:auto"><table class="data-table" style="font-size:12px"><thead><tr>' +
+      '<th>Manager</th><th>Player</th><th class="r">Roster HR</th><th class="r">Baseline</th>' +
+      '<th class="r">Latest Season</th><th class="r">Δ</th><th class="r">History hits</th><th class="r">This mgr/mo</th>' +
+      '</tr></thead><tbody>';
+    for(const p of d.players){
+      const base = p.baselineSeasonHR;
+      const live = p.liveSeasonHR;
+      const delta = (base !== null && live !== null) ? (live - base) : null;
+      const stale = (delta !== null && delta > 0);
+      html += `<tr style="${stale?'background:#fff8e8':''}">
+        <td>${p.manager}</td>
+        <td><strong>${p.rosterPlayer}</strong></td>
+        <td class="r" style="font-family:'Roboto Mono',monospace;font-weight:600">${p.rosterHR}</td>
+        <td class="r" style="font-family:'Roboto Mono',monospace">${base ?? '—'}</td>
+        <td class="r" style="font-family:'Roboto Mono',monospace">${live ?? '—'}</td>
+        <td class="r" style="font-family:'Roboto Mono',monospace;color:${stale?'#c0392b':'inherit'}">${delta ?? '—'}</td>
+        <td class="r" style="font-family:'Roboto Mono',monospace">${p.historyEntriesForPlayer}</td>
+        <td class="r" style="font-family:'Roboto Mono',monospace">${p.historyEntriesForThisMgrThisMonth}</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+    html += '<p style="font-size:11px;color:var(--text-faint);margin-top:8px">Yellow rows = season total has risen above the baseline (the sync saw new HRs). If Δ is positive but Roster HR did not move, a stale save was overwriting the update — fixed in this build by per-slot conflict resolution.</p>';
+    out.innerHTML = html;
+  }catch(e){
+    out.innerHTML = `<p style="font-size:13px;color:var(--red)">Diagnostics failed: ${e.message}</p>`;
+  }
+}
 
 // ── INIT ──
 
