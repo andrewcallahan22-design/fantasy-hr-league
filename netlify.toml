@@ -2,8 +2,9 @@
   publish = "."
   functions = "netlify/functions"
 
-# 00:00 & 06:00 UTC = 5:00 PM & 11:00 PM Pacific (PDT).
-# Note: when clocks change to PST in November these become 4 PM & 10 PM Pacific;
-# change to "0 1,7 * * *" then if you want to keep 5/11 PM exactly.
+# Game-hours sync: every 5 minutes from 9 AM through 10:55 PM Pacific.
+# Cron is UTC: 9 AM PDT = 16:00 UTC, 11 PM PDT = 06:00 UTC next day.
+# This expression: every 5 min during 16:00-23:59 and 00:00-05:59 UTC (= 9 AM - 10:59 PM PDT).
+# Outside those hours it stays quiet — matching the quiet hours in notify.mjs.
 [functions."scheduled-sync"]
-  schedule = "0 0,6 * * *"
+  schedule = "*/5 16-23,0-5 * * *"

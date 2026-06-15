@@ -314,6 +314,13 @@
         ✓ Auto-sync runs on the server at <strong>5 PM</strong> and <strong>11 PM</strong> Pacific — nobody needs to keep the page open. The ⟳ Sync button triggers it immediately for the whole league.
       </p>
       <div class="settings-divider"></div>
+      <h3>Notifications</h3>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">
+        Get a push notification when one of your players homers, or when someone takes the league lead. Quiet hours from 11 PM to 9 AM Pacific.
+      </p>
+      <div id="notif-panel"><p style="font-size:13px;color:var(--text-faint)">Loading…</p></div>
+
+      <div class="settings-divider"></div>
       <h3>Diagnostics</h3>
       <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">
         For every rostered player, shows: roster HR vs. server baseline, last known season total, and how many History entries the system has logged for them. Use this when you see History updating but Scores not changing.
@@ -559,7 +566,7 @@ function showPage(p){
   if(p==='standings')renderStandings();
   if(p==='draft')renderDraft();
   if(p==='history')renderHistory();
-  if(p==='settings')renderSettings();
+  if(p==='settings'){renderSettings(); renderNotifications();}
 }
 
 // ── SYNC STATUS ──
@@ -1013,7 +1020,116 @@ async function loadDiagnostics(){
   }
 }
 
-// ── INIT ──
+// ── PUSH NOTIFICATIONS ──
+const API_PUSH = '/.netlify/functions/push';
+
+function urlBase64ToUint8Array(b64) {
+  const padding = '='.repeat((4 - b64.length % 4) % 4);
+  const base64 = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function getPushInfo() {
+  try {
+    const r = await fetch(API_PUSH, { headers: authHeaders(), cache: 'no-store' });
+    return await r.json();
+  } catch (e) {
+    return { publicKey: null, subscribed: false, error: e.message };
+  }
+}
+
+async function renderNotifications() {
+  const el = document.getElementById('notif-panel');
+  if (!el) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    el.innerHTML = '<p style="font-size:13px;color:var(--text-faint)">This browser doesn\'t support web push. Try Chrome, Edge, Firefox, or Safari 16.4+ on iOS (Home Screen icon required).</p>';
+    return;
+  }
+  if (!SESSION) {
+    el.innerHTML = '<p style="font-size:13px;color:var(--text-muted)">Sign in to enable notifications.</p>';
+    return;
+  }
+  const info = await getPushInfo();
+  if (!info.publicKey) {
+    el.innerHTML = '<p style="font-size:13px;color:var(--red)">Notifications not configured yet — admin needs to add VAPID keys to Netlify env vars.</p>';
+    return;
+  }
+  const reg = await navigator.serviceWorker.getRegistration();
+  const localSub = reg ? await reg.pushManager.getSubscription() : null;
+  const subscribed = info.subscribed && !!localSub;
+
+  // iOS standalone-mode hint
+  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  let iosHint = '';
+  if (iOS && !standalone) {
+    iosHint = '<p style="font-size:12px;color:var(--text-muted);margin-top:8px;background:#fefbe6;border:1px solid #f0e08a;padding:8px 10px;border-radius:6px">📱 On iPhone, add this site to your Home Screen first (Share → Add to Home Screen), then open it from the home-screen icon and come back here to enable notifications.</p>';
+  }
+
+  const status = subscribed
+    ? `<span style="background:#e8f4ec;color:#1a4a2e;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:500">✓ Notifications on</span>`
+    : `<span style="background:#fff8e8;color:#7a5a05;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:500">Off</span>`;
+  const btn = subscribed
+    ? '<button class="btn-dark danger" onclick="disableNotifications()">Turn off notifications</button>'
+    : '<button class="btn-dark" onclick="enableNotifications()">Enable notifications on this device</button>';
+
+  el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${status}${btn}</div>${iosHint}<p style="font-size:11px;color:var(--text-faint);margin-top:8px">Each device subscribes separately — repeat on phone and laptop if you want both.</p>`;
+}
+
+async function enableNotifications() {
+  try {
+    const info = await getPushInfo();
+    if (!info.publicKey) return alert('Notifications not configured by admin yet.');
+
+    // Register service worker (root scope so it can be hit by any page)
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      alert(perm === 'denied'
+        ? 'Notifications were blocked. Enable them in your browser settings for this site.'
+        : 'Notifications not granted.');
+      return;
+    }
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(info.publicKey),
+    });
+    const r = await fetch(API_PUSH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'subscribe', subscription: sub.toJSON() }),
+    });
+    const res = await r.json();
+    if (!res.ok) throw new Error(res.error || 'subscribe failed');
+    renderNotifications();
+  } catch (e) {
+    console.error(e);
+    alert('Could not enable notifications: ' + e.message);
+  }
+}
+
+async function disableNotifications() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (sub) {
+      await sub.unsubscribe();
+      await fetch(API_PUSH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ action: 'unsubscribe', subscription: sub.toJSON() }),
+      });
+    }
+    renderNotifications();
+  } catch (e) {
+    console.error(e);
+    alert('Could not disable: ' + e.message);
+  }
+}
 
 // ── INIT ──
 let currentPage = 'scores';

@@ -112,6 +112,10 @@ export async function runSync() {
     }
   }));
 
+  // Collect HR events so we can notify the right managers after state is saved.
+  const hrEvents = []; // { player, delta, mgr } per slot updated
+  const leaderBefore = computeLeader(state);
+
   for (const r of results) {
     const nk = normName(r.player);
     if (!r.ok) { failed.push(r.player); continue; }
@@ -132,7 +136,10 @@ export async function runSync() {
           if (slot.player && normName(slot.player) === nk) {
             slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
             logChange(state, slot.player, delta, mgr, key, 'sync');
-            if (delta > 0) added += delta;
+            if (delta > 0) {
+              added += delta;
+              hrEvents.push({ player: slot.player, delta, mgr });
+            }
           }
         }
       }
@@ -140,8 +147,35 @@ export async function runSync() {
     }
   }
 
+  const leaderAfter = computeLeader(state);
+
   state.lastSync = Date.now();
   await saveLeagueState(state);
 
+  // Fire-and-forget notification fan-out. Failures here must not break the sync.
+  if (hrEvents.length || leaderAfter?.name !== leaderBefore?.name) {
+    try {
+      const { dispatchNotifications } = await import('./notify.mjs');
+      await dispatchNotifications({ state, hrEvents, leaderBefore, leaderAfter });
+    } catch (e) {
+      console.warn('Notification dispatch failed (non-fatal):', e.message);
+    }
+  }
+
   return { ok: true, added, failed, ts: state.lastSync };
+}
+
+function computeLeader(state) {
+  const key = state.currentMonth;
+  if (!key || !state.months?.[key]) return null;
+  const totals = {};
+  for (const mgr of state.managers) {
+    totals[mgr] = (state.months[key].rosters[mgr] || [])
+      .reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
+  }
+  let leader = null, max = -1;
+  for (const [m, t] of Object.entries(totals)) {
+    if (t > max) { max = t; leader = m; }
+  }
+  return leader ? { name: leader, hr: max } : null;
 }
