@@ -78,8 +78,16 @@ export async function saveLeagueState(state) {
   await store.setJSON('state', state);
 }
 
-export async function runSync() {
+export async function runSync(opts = {}) {
   const state = await loadLeagueState();
+
+  // Re-entry guard: if we just successfully ran within the last 30 seconds,
+  // skip this run. Prevents double notifications when two cron jobs race or
+  // a manual ⟳ press lands right after the scheduled run. Manual triggers
+  // can pass { force: true } to bypass.
+  if (!opts.force && state.lastSync && (Date.now() - state.lastSync) < 30 * 1000) {
+    return { ok: true, skipped: true, reason: 'rate-limited (last sync <30s ago)', ts: state.lastSync };
+  }
 
   const key = state.currentMonth;
   if (!key || !state.months?.[key]) return { ok: false, error: 'No active month' };
@@ -153,7 +161,14 @@ export async function runSync() {
   await saveLeagueState(state);
 
   // Fire-and-forget notification fan-out. Failures here must not break the sync.
-  if (hrEvents.length || leaderAfter?.name !== leaderBefore?.name) {
+  // Detect "leader situation changed": the set of leaders shifted, or the HR
+  // count changed while the same group still leads. Comparing sorted names
+  // catches both takeovers (HK→Max) and ties (HK→HK+Max).
+  const beforeSig = leaderBefore ? (leaderBefore.names || []).join(',') + ':' + leaderBefore.hr : '';
+  const afterSig  = leaderAfter  ? (leaderAfter.names  || []).join(',') + ':' + leaderAfter.hr  : '';
+  const leaderSituationChanged = beforeSig !== afterSig
+    && leaderAfter && (leaderAfter.names || []).length > 0;
+  if (hrEvents.length || leaderSituationChanged) {
     try {
       const { dispatchNotifications } = await import('./notify.mjs');
       await dispatchNotifications({ state, hrEvents, leaderBefore, leaderAfter });
@@ -173,9 +188,14 @@ function computeLeader(state) {
     totals[mgr] = (state.months[key].rosters[mgr] || [])
       .reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
   }
-  let leader = null, max = -1;
-  for (const [m, t] of Object.entries(totals)) {
-    if (t > max) { max = t; leader = m; }
-  }
-  return leader ? { name: leader, hr: max } : null;
+  // Find the max HR count, then return EVERY manager who has that count.
+  // This lets the notifier distinguish "took the lead" from "tied for the lead".
+  let max = -1;
+  for (const t of Object.values(totals)) if (t > max) max = t;
+  if (max < 0) return null;
+  const leaders = Object.entries(totals)
+    .filter(([_, t]) => t === max)
+    .map(([m]) => m)
+    .sort();
+  return { names: leaders, hr: max };
 }
