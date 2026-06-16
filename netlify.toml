@@ -2,9 +2,7 @@
   publish = "."
   functions = "netlify/functions"
 
-# Game-hours sync: every 5 minutes from 9 AM through 10:55 PM Pacific.
-# Cron is UTC: 9 AM PDT = 16:00 UTC, 11 PM PDT = 06:00 UTC next day.
-# This expression: every 5 min during 16:00-23:59 and 00:00-05:59 UTC (= 9 AM - 10:59 PM PDT).
-# Outside those hours it stays quiet — matching the quiet hours in notify.mjs.
-[functions."scheduled-sync"]
-  schedule = "*/5 16-23,0-5 * * *"
+# Note: we use external cron (cron-job.org) hitting /run-sync?leagueId=...
+# to drive syncs every minute. Netlify free tier scheduled functions only
+# support hourly intervals, so they're disabled here in favor of the external job.
+# The scheduled-sync function is still deployed as a manual fallback.
