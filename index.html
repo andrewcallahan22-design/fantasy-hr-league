@@ -316,7 +316,7 @@
       <div class="settings-divider"></div>
       <h3>Notifications</h3>
       <p style="font-size:13px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">
-        Get a push notification when one of your players homers, or when someone takes the league lead. Quiet hours from 11 PM to 9 AM Pacific.
+        Get notified when your own players homer (with a little celebration 🚀) — and optionally when anyone else's players homer too. Plus a notification when someone takes the league lead. Quiet hours from 11 PM to 9 AM Pacific.
       </p>
       <div id="notif-panel"><p style="font-size:13px;color:var(--text-faint)">Loading…</p></div>
 
@@ -510,9 +510,9 @@ async function loadState(){
     const r = await fetch(API_DATA, { cache: 'no-store' });
     if(!r.ok) throw new Error(r.status);
     S = await r.json();
-    // Stamp each roster slot with the HR value we loaded — the server uses this
-    // to tell whether a subsequent save is a real edit or stale data trying to
-    // overwrite a fresh sync. Cleared automatically when slot.hr is changed.
+    // Update banner timestamp from server every time we load — this is why the
+    // banner stays fresh even when the cron is running on the server side.
+    if (S.lastSync) _bannerLastSyncTs = S.lastSync;
     if (S.months) {
       for (const m of Object.values(S.months)) {
         if (!m.rosters) continue;
@@ -570,11 +570,52 @@ function showPage(p){
 }
 
 // ── SYNC STATUS ──
-function setSyncUI(state,msg){
-  const d=document.getElementById('sync-dot');
-  const s=document.getElementById('sync-status');
-  if(d)d.className='sync-dot '+(state==='live'?'live':state==='loading'?'loading':state==='err'?'err':'');
-  if(s)s.textContent=msg;
+// Live-updating banner: when state is "live" with a server timestamp, show a
+// relative time like "Synced 2 min ago" and refresh it every 10s so it never
+// looks stale. Manual messages (Saving…, etc.) pass an explicit msg.
+let _bannerLastSyncTs = null;
+let _bannerTicker = null;
+
+function relativeTime(ts){
+  if (!ts) return 'just now';
+  const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (sec < 30) return 'just now';
+  if (sec < 90) return '1 min ago';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + ' min ago';
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return hr + ' hr ago';
+  return new Date(ts).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+
+function setSyncUI(state, msg, opts){
+  const d = document.getElementById('sync-dot');
+  const s = document.getElementById('sync-status');
+  if (d) d.className = 'sync-dot ' + (state==='live'?'live':state==='loading'?'loading':state==='err'?'err':'');
+  // If a server timestamp is supplied, remember it and render relative time.
+  if (opts && opts.serverTs) {
+    _bannerLastSyncTs = opts.serverTs;
+    if (s) s.textContent = msg + ' · ' + relativeTime(_bannerLastSyncTs);
+  } else if (state === 'live' && !msg && _bannerLastSyncTs) {
+    if (s) s.textContent = 'Synced ' + relativeTime(_bannerLastSyncTs);
+  } else {
+    if (s) s.textContent = msg;
+  }
+}
+
+// Ticker keeps the relative timestamp fresh once the live state is established.
+function startBannerTicker(){
+  if (_bannerTicker) return;
+  _bannerTicker = setInterval(() => {
+    if (!_bannerLastSyncTs) return;
+    const s = document.getElementById('sync-status');
+    const d = document.getElementById('sync-dot');
+    // Only auto-refresh the text when the dot is in the "live" state (don't
+    // clobber Saving… or error messages).
+    if (s && d && d.classList.contains('live')) {
+      s.textContent = 'Synced ' + relativeTime(_bannerLastSyncTs);
+    }
+  }, 10000);
 }
 
 // ── NAME NORMALIZATION ──
@@ -1074,7 +1115,36 @@ async function renderNotifications() {
     ? '<button class="btn-dark danger" onclick="disableNotifications()">Turn off notifications</button>'
     : '<button class="btn-dark" onclick="enableNotifications()">Enable notifications on this device</button>';
 
-  el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${status}${btn}</div>${iosHint}<p style="font-size:11px;color:var(--text-faint);margin-top:8px">Each device subscribes separately — repeat on phone and laptop if you want both.</p>`;
+  // League-wide opt-in toggle (only meaningful once subscribed)
+  const allToggle = subscribed
+    ? `<div style="margin-top:14px;padding:12px;background:#f7f5ef;border-radius:8px;border:1px solid var(--card-border)">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+          <input type="checkbox" id="notify-all-toggle" ${info.notifyAll ? 'checked' : ''} onchange="setNotifyAll(this.checked)" style="margin-top:3px;width:18px;height:18px;cursor:pointer;accent-color:var(--green-field)">
+          <div>
+            <div style="font-weight:600;font-size:13px;color:var(--text-main)">Notify me on every league HR</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px;line-height:1.4">
+              Get a notification any time a rostered player homers — yours or someone else's. Your own players get a celebratory ping; others come through as quick factual updates ("X homered · +1 for HK's roster").
+            </div>
+          </div>
+        </label>
+      </div>`
+    : '';
+
+  el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${status}${btn}</div>${iosHint}${allToggle}<p style="font-size:11px;color:var(--text-faint);margin-top:10px">Each device subscribes separately — repeat on phone and laptop if you want both. Quiet hours 11 PM – 9 AM Pacific.</p>`;
+}
+
+async function setNotifyAll(value) {
+  try {
+    await fetch(API_PUSH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'set-prefs', notifyAll: value }),
+    });
+  } catch (e) {
+    console.warn('Failed to save preference:', e);
+    alert('Could not save preference — try again');
+    renderNotifications();
+  }
 }
 
 async function enableNotifications() {
@@ -1160,22 +1230,31 @@ async function init(){
   const ok = await loadState();
   populateSels(); renderScores(); renderSettings();
   if(ok){
-    const last = S.lastSync
-      ? new Date(S.lastSync).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
-      : null;
-    setSyncUI('live', last ? `Shared · last sync ${last}` : 'Shared · not synced yet');
+    if (S.lastSync) {
+      setSyncUI('live', 'Synced', { serverTs: S.lastSync });
+    } else {
+      setSyncUI('live', 'Shared · not synced yet');
+    }
+    startBannerTicker();
   }else{
     setSyncUI('err','Offline preview — shared data needs the Netlify site');
   }
-  // Refresh from the shared state every 15s so everyone stays in step.
+  // Refresh from the shared state every 15s so everyone stays in step. The
+  // ticker (every 10s) keeps the relative timestamp fresh between polls.
   setInterval(async () => {
     if(document.hidden) return;
-    if(saveInFlight) return;            // don't read mid-write
+    if(saveInFlight) return;
     const el = document.activeElement;
-    // Only skip if the user is actively typing in a text field; selects/buttons re-render fine.
     if(el && el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'number')) return;
     const ok2 = await loadState();
-    if(ok2) rerenderCurrent();
+    if(ok2){
+      rerenderCurrent();
+      // After a successful poll, refresh the banner to reflect the new server ts.
+      const d = document.getElementById('sync-dot');
+      if (d && !d.classList.contains('err') && !d.classList.contains('loading')) {
+        setSyncUI('live', 'Synced', { serverTs: S.lastSync || _bannerLastSyncTs });
+      }
+    }
   }, 15000);
 }
 init();

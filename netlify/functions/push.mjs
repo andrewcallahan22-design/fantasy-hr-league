@@ -1,6 +1,6 @@
-// Push subscriptions endpoint.
-// GET  -> { publicKey, subscribed }  — the browser needs the VAPID public key to subscribe
-// POST -> { action: 'subscribe' | 'unsubscribe', subscription }  — sign-in required
+// Push subscriptions + preferences.
+// GET  -> { publicKey, subscribed, notifyAll }  — used by the Settings UI
+// POST -> { action: 'subscribe' | 'unsubscribe' | 'set-prefs', subscription, notifyAll }
 import { getStore } from '@netlify/blobs';
 import { verifyAuth } from './lib/auth.mjs';
 
@@ -12,15 +12,23 @@ async function loadSubs() {
 async function saveSubs(s) {
   await getStore('league').setJSON('pushSubs', s);
 }
+async function loadPrefs() {
+  return (await getStore('league').get('pushPrefs', { type: 'json' })) || {};
+}
+async function savePrefs(p) {
+  await getStore('league').setJSON('pushPrefs', p);
+}
 
 export default async (req) => {
   const session = await verifyAuth(req);
 
   if (req.method === 'GET') {
     const subs = await loadSubs();
+    const prefs = await loadPrefs();
     return Response.json({
       publicKey: process.env.VAPID_PUBLIC_KEY || null,
       subscribed: session ? !!subs[session.manager]?.length : false,
+      notifyAll: session ? !!prefs[session.manager]?.notifyAll : false,
     }, { headers: NO_CACHE });
   }
 
@@ -35,7 +43,6 @@ export default async (req) => {
     if (!body.subscription?.endpoint) {
       return Response.json({ ok: false, error: 'Missing subscription' }, { status: 400 });
     }
-    // Dedupe by endpoint (re-subscribing on the same device updates keys)
     subs[session.manager] = subs[session.manager]
       .filter(s => s.endpoint !== body.subscription.endpoint);
     subs[session.manager].push(body.subscription);
@@ -51,6 +58,14 @@ export default async (req) => {
       subs[session.manager] = [];
     }
     await saveSubs(subs);
+    return Response.json({ ok: true });
+  }
+
+  if (body.action === 'set-prefs') {
+    const prefs = await loadPrefs();
+    if (!prefs[session.manager]) prefs[session.manager] = {};
+    prefs[session.manager].notifyAll = !!body.notifyAll;
+    await savePrefs(prefs);
     return Response.json({ ok: true });
   }
 

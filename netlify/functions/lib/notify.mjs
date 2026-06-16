@@ -26,24 +26,43 @@ export async function dispatchNotifications({ state, hrEvents, leaderBefore, lea
 
   const store = getStore('league');
   const allSubs = (await store.get('pushSubs', { type: 'json' })) || {};
+  const allPrefs = (await store.get('pushPrefs', { type: 'json' })) || {};
 
   // Build message list — one per (manager, message) we want to deliver.
+  // For each HR event:
+  //   - The roster owner ALWAYS gets a celebratory notification.
+  //   - Other managers with notifyAll=true get a calm factual notification
+  //     identifying whose roster the HR was for.
   const queue = [];
 
-  // 1. Per-HR notifications to the affected manager only
   for (const ev of hrEvents) {
+    // Owner notification — exciting copy
     queue.push({
       manager: ev.mgr,
       payload: JSON.stringify({
-        title: `⚾ ${ev.player} homered!`,
-        body: `+${ev.delta} HR for your team`,
-        tag: `hr-${ev.player}-${Date.now()}`,
+        title: `🚀 BOOM! ${ev.player} just went yard!`,
+        body: `+${ev.delta} HR for YOUR team — keep it going!`,
+        tag: `hr-own-${ev.player}-${Date.now()}`,
         url: '/',
       }),
     });
+    // League-wide notifications — opt-in, neutral tone
+    for (const mgr of state.managers) {
+      if (mgr === ev.mgr) continue;
+      if (!allPrefs[mgr]?.notifyAll) continue;
+      queue.push({
+        manager: mgr,
+        payload: JSON.stringify({
+          title: `⚾ ${ev.player} homered`,
+          body: `+${ev.delta} for ${ev.mgr}'s roster`,
+          tag: `hr-other-${ev.player}-${Date.now()}`,
+          url: '/',
+        }),
+      });
+    }
   }
 
-  // 2. League leader change — notify everyone
+  // League leader change — notify everyone
   if (leaderAfter && leaderBefore && leaderAfter.name !== leaderBefore.name) {
     for (const mgr of state.managers) {
       const isYou = (mgr === leaderAfter.name);
