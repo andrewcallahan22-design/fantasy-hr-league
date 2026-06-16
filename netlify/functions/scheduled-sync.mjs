@@ -1,10 +1,8 @@
-// Scheduled sync — Netlify runs this automatically on the cron schedule in
-// netlify.toml (00:00 & 06:00 UTC = 5 PM & 11 PM Pacific Daylight Time).
-// Nobody needs to have the page open; this runs on Netlify's servers.
-import { runSync } from './lib/core.mjs';
+// Scheduled sync — Netlify or external cron triggers this. Syncs every league.
+import { runSyncForAllLeagues } from './lib/core.mjs';
 
 export default async () => {
-  const result = await runSync();
-  console.log('Scheduled sync result:', JSON.stringify(result));
+  const result = await runSyncForAllLeagues();
+  console.log('Scheduled sync:', JSON.stringify({ ok: result.ok, leagues: result.leagues }));
   return new Response(JSON.stringify(result));
 };

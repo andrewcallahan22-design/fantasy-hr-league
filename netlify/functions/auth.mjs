@@ -1,23 +1,24 @@
-// Auth endpoint.
-// GET  -> { managers, claimed, me } — used by the sign-up screen and session check
-// POST -> { action: 'signup' | 'login' | 'logout' }
-//   signup: each league manager (Max/Johnny/HK/Cali) can be claimed exactly once
-//   with an email + password. After that, it's login-only for that manager.
+// Auth endpoint — user-centric (no league coupling at signup).
+// GET                                  → { me, isAdmin }
+// POST { action: 'signup', email, password, displayName }
+// POST { action: 'login',  email, password }
+// POST { action: 'logout' }
 import crypto from 'node:crypto';
-import { getUsers, saveUsers, hashPassword, createSession, destroySession, verifyAuth, isAdminEmail } from './lib/auth.mjs';
-import { loadLeagueState } from './lib/core.mjs';
+import {
+  hashPassword, createSession, destroySession, verifyAuth, isAdminEmail,
+} from './lib/auth.mjs';
+import { getUser, saveUser, ensureLegacyMigrated } from './lib/storage.mjs';
+
+const NO_CACHE = { 'Cache-Control': 'no-store' };
 
 export default async (req) => {
+  await ensureLegacyMigrated();
+
   if (req.method === 'GET') {
-    const state = await loadLeagueState();
-    const users = await getUsers();
-    const claimed = Object.values(users).map(u => u.manager);
     const session = await verifyAuth(req);
     return Response.json({
-      managers: state.managers,
-      claimed,
-      me: session ? { manager: session.manager, email: session.email, isAdmin: session.isAdmin } : null,
-    });
+      me: session ? { email: session.email, isAdmin: session.isAdmin } : null,
+    }, { headers: NO_CACHE });
   }
 
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
@@ -26,37 +27,34 @@ export default async (req) => {
   if (body.action === 'signup') {
     const email = String(body.email || '').toLowerCase().trim();
     const password = String(body.password || '');
-    const manager = String(body.manager || '');
-    if (!email.includes('@') || password.length < 6 || !manager) {
-      return Response.json({ ok: false, error: 'Valid email, manager, and a 6+ character password required' }, { status: 400 });
+    const displayName = String(body.displayName || '').trim() || email.split('@')[0];
+    if (!email.includes('@') || password.length < 6) {
+      return Response.json({ ok: false, error: 'Valid email and 6+ character password required' }, { status: 400 });
     }
-    const state = await loadLeagueState();
-    if (!state.managers.includes(manager)) {
-      return Response.json({ ok: false, error: 'Unknown manager name' }, { status: 400 });
-    }
-    const users = await getUsers();
-    if (users[email]) {
-      return Response.json({ ok: false, error: 'That email is already registered' }, { status: 400 });
-    }
-    if (Object.values(users).some(u => u.manager === manager)) {
-      return Response.json({ ok: false, error: `${manager} has already been claimed` }, { status: 400 });
+    if (await getUser(email)) {
+      return Response.json({ ok: false, error: 'An account with that email already exists — sign in instead' }, { status: 400 });
     }
     const salt = crypto.randomBytes(16).toString('hex');
-    users[email] = { email, manager, salt, hash: hashPassword(password, salt), createdAt: Date.now() };
-    await saveUsers(users);
-    const token = await createSession(email, manager);
-    return Response.json({ ok: true, token, manager, email, isAdmin: isAdminEmail(email) });
+    await saveUser({
+      email,
+      displayName,
+      salt,
+      hash: hashPassword(password, salt),
+      createdAt: Date.now(),
+      leagues: [],
+    });
+    const token = await createSession(email);
+    return Response.json({ ok: true, token, email, displayName, isAdmin: isAdminEmail(email) });
   }
 
   if (body.action === 'login') {
     const email = String(body.email || '').toLowerCase().trim();
-    const users = await getUsers();
-    const u = users[email];
+    const u = await getUser(email);
     if (!u || hashPassword(String(body.password || ''), u.salt) !== u.hash) {
       return Response.json({ ok: false, error: 'Wrong email or password' }, { status: 401 });
     }
-    const token = await createSession(u.email, u.manager);
-    return Response.json({ ok: true, token, manager: u.manager, email: u.email, isAdmin: isAdminEmail(u.email) });
+    const token = await createSession(u.email);
+    return Response.json({ ok: true, token, email: u.email, displayName: u.displayName, isAdmin: isAdminEmail(u.email) });
   }
 
   if (body.action === 'logout') {

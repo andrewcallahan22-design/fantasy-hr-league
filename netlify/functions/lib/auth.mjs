@@ -1,13 +1,10 @@
-// Auth library — email/password accounts for league managers.
-// Passwords are salted + hashed with scrypt (Node built-in crypto, no dependencies).
-// Sessions are random 256-bit tokens stored server-side with a 30-day expiry.
+// Auth — user-centric, not per-league.
+// A user has one account; they can belong to many leagues with different
+// manager names in each. Per-league manager identity is resolved by looking
+// up the user's email against the target league's members list.
 import crypto from 'node:crypto';
-import { getStore } from '@netlify/blobs';
+import { getSessions, saveSessions, getUser } from './storage.mjs';
 
-const store = () => getStore('league');
-
-// Admin emails — these accounts can edit any manager's roster.
-// Compare lowercase.
 export const ADMIN_EMAILS = new Set([
   'andrewcallahan22@gmail.com',
 ]);
@@ -15,32 +12,18 @@ export function isAdminEmail(email) {
   return !!email && ADMIN_EMAILS.has(String(email).toLowerCase().trim());
 }
 
-export async function getUsers() {
-  return (await store().get('users', { type: 'json' })) || {};
-}
-export async function saveUsers(u) {
-  await store().setJSON('users', u);
-}
-export async function getSessions() {
-  return (await store().get('sessions', { type: 'json' })) || {};
-}
-export async function saveSessions(s) {
-  await store().setJSON('sessions', s);
-}
-
 export function hashPassword(password, salt) {
   return crypto.scryptSync(String(password), salt, 64).toString('hex');
 }
 
-export async function createSession(email, manager) {
+export async function createSession(email) {
   const sessions = await getSessions();
   const now = Date.now();
-  // prune expired sessions while we're here
   for (const [t, s] of Object.entries(sessions)) {
     if (s.exp < now) delete sessions[t];
   }
   const token = crypto.randomBytes(32).toString('hex');
-  sessions[token] = { email, manager, isAdmin: isAdminEmail(email), exp: now + 30 * 86400000 };
+  sessions[token] = { email: email.toLowerCase(), exp: now + 30 * 86400000 };
   await saveSessions(sessions);
   return token;
 }
@@ -61,7 +44,26 @@ export async function verifyAuth(req) {
   const sessions = await getSessions();
   const s = sessions[token];
   if (!s || s.exp < Date.now()) return null;
-  // Re-evaluate admin status on every check so newly-tagged admins
-  // get the privilege without having to sign back in.
-  return { ...s, isAdmin: isAdminEmail(s.email), token };
+  return { email: s.email.toLowerCase(), token, isAdmin: isAdminEmail(s.email) };
+}
+
+export function managerForUser(league, email) {
+  if (!league?.members || !email) return null;
+  const m = league.members.find(
+    mem => mem.email && mem.email.toLowerCase() === email.toLowerCase() && mem.status === 'active'
+  );
+  return m ? m.manager : null;
+}
+
+export function isCommissioner(league, email) {
+  if (!league?.commissioner || !email) return false;
+  return league.commissioner.toLowerCase() === email.toLowerCase();
+}
+
+export function canEditRoster(league, session, targetManager) {
+  if (!session) return false;
+  if (session.isAdmin) return true;
+  if (isCommissioner(league, session.email)) return true;
+  const myMgr = managerForUser(league, session.email);
+  return myMgr === targetManager;
 }
