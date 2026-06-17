@@ -44,24 +44,16 @@ input, select { font-family: inherit; }
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-/* ── DIAMOND BACKDROP (sits on body for every page) ── */
-.diamond-bg {
-  position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 0;
-}
-.diamond-bg::before {
-  content: ''; position: absolute; inset: 0;
-  background: radial-gradient(ellipse 80% 50% at 50% 100%, rgba(45,122,68,0.4) 0%, rgba(45,122,68,0.18) 35%, transparent 70%);
-}
-.diamond-bg::after {
-  content: ''; position: absolute; inset: 0;
+/* ── PAGE BACKGROUND ──
+   Subtle gradient gives the dark broadcast surface a hint of depth without
+   needing field imagery. Bottom is slightly warmer (rgba green) to keep the
+   "baseball at a stadium at night" feeling without being literal. */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
   background:
-    radial-gradient(ellipse 400px 220px at 8% -10%, rgba(255,240,200,0.07) 0%, transparent 60%),
-    radial-gradient(ellipse 400px 220px at 92% -10%, rgba(255,240,200,0.07) 0%, transparent 60%);
-}
-.diamond-bg svg { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); width: 90%; max-width: 900px; opacity: 0.55; }
-.diamond-vignette {
-  position: fixed; inset: 0; pointer-events: none; z-index: 1;
-  background: radial-gradient(ellipse at 50% 30%, transparent 0%, rgba(5,8,16,0.55) 80%);
+    radial-gradient(ellipse 60% 45% at 50% 100%, rgba(45,122,68,0.12) 0%, transparent 65%),
+    radial-gradient(ellipse 400px 250px at 8% -10%, rgba(255,240,200,0.04) 0%, transparent 60%),
+    radial-gradient(ellipse 400px 250px at 92% -10%, rgba(255,240,200,0.04) 0%, transparent 60%);
 }
 
 /* ── HEADER ── */
@@ -532,27 +524,6 @@ a:hover { text-decoration: underline; }
 </head>
 <body>
 
-<!-- ── DIAMOND BACKDROP ── -->
-<div class="diamond-bg">
-  <svg viewBox="0 0 700 500" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
-    <path d="M 50 480 Q 350 80 650 480 L 350 480 Z" fill="#1a4a2e" opacity="0.65"/>
-    <path d="M 350 470 L 110 280 Q 350 70 590 280 L 350 470 Z" fill="#7a5a3a" opacity="0.7"/>
-    <path d="M 350 440 L 220 280 L 350 120 L 480 280 Z" fill="#2d7a44" opacity="0.7"/>
-    <ellipse cx="350" cy="280" rx="26" ry="13" fill="#9b7a4e" opacity="0.75"/>
-    <circle cx="350" cy="280" r="4" fill="#f4f1e6" opacity="0.7"/>
-    <rect x="343" y="433" width="14" height="14" transform="rotate(45 350 440)" fill="#f4f1e6" opacity="0.9"/>
-    <rect x="473" y="273" width="14" height="14" transform="rotate(45 480 280)" fill="#f4f1e6" opacity="0.9"/>
-    <rect x="343" y="113" width="14" height="14" transform="rotate(45 350 120)" fill="#f4f1e6" opacity="0.9"/>
-    <rect x="213" y="273" width="14" height="14" transform="rotate(45 220 280)" fill="#f4f1e6" opacity="0.9"/>
-    <line x1="350" y1="470" x2="70" y2="200" stroke="#f4f1e6" stroke-width="2.5" opacity="0.45"/>
-    <line x1="350" y1="470" x2="630" y2="200" stroke="#f4f1e6" stroke-width="2.5" opacity="0.45"/>
-    <path d="M 60 200 Q 350 40 640 200" stroke="#0d2818" stroke-width="5" fill="none" opacity="0.5"/>
-    <rect x="105" y="445" width="62" height="16" rx="2" fill="#1a1a1a" opacity="0.65"/>
-    <rect x="533" y="445" width="62" height="16" rx="2" fill="#1a1a1a" opacity="0.65"/>
-  </svg>
-</div>
-<div class="diamond-vignette"></div>
-
 <!-- ── HEADER ── -->
 <header class="site-header">
   <div class="brand" onclick="navigate('/')">
@@ -815,8 +786,9 @@ async function renderMyLeagues() {
       <h1 class="page-title">My Leagues</h1>
       <p class="page-subtitle">Welcome back, ${escapeHtml(SESSION.displayName || SESSION.email)}.</p>
       <div id="my-leagues-list"><p class="page-subtitle">Loading…</p></div>
-      <div style="margin-top: 18px">
+      <div style="margin-top: 18px; display:flex; gap:10px; flex-wrap:wrap">
         <button class="btn btn-primary" onclick="navigate('/new')">+ Start a new league</button>
+        ${SESSION.isAdmin ? '<button class="btn btn-ghost" onclick="openClaimDialog()">⚙️ Admin: claim existing manager slot</button>' : ''}
       </div>
     </div>
   `;
@@ -825,11 +797,17 @@ async function renderMyLeagues() {
     const data = await r.json();
     const list = document.getElementById('my-leagues-list');
     if (!data.leagues || !data.leagues.length) {
+      const helperForAdmin = SESSION.isAdmin
+        ? `<div class="notice info" style="margin-top:14px;text-align:left">
+            <strong>Admin tip:</strong> If you have an existing league that needs claiming (e.g. migrated from v6), click <em>Admin: claim existing manager slot</em> below to link your account to a manager name in any league.
+          </div>`
+        : '';
       list.innerHTML = `
         <div class="empty-state">
           <div class="empty-state-title">You're not in any leagues yet</div>
           <div class="empty-state-body">Start your own with the button below, or use an invite link from a friend.</div>
         </div>
+        ${helperForAdmin}
       `;
       return;
     }
@@ -847,6 +825,62 @@ async function renderMyLeagues() {
     `).join('')}</div>`;
   } catch (e) {
     document.getElementById('my-leagues-list').innerHTML = '<div class="notice err">Couldn\'t load your leagues — try refreshing.</div>';
+  }
+}
+
+// ── ADMIN: claim an existing manager slot ──
+// Surfaces a small dialog for admins to link their email to a pre-existing
+// manager name in any league. Primary use case: legacy-migrated leagues
+// where managers exist but have no email attached.
+function openClaimDialog() {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay open';
+  wrap.id = 'claim-modal';
+  wrap.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-head-title">Claim manager slot</span>
+        <button class="modal-close" onclick="document.getElementById('claim-modal').remove()">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="input-help" style="margin-bottom:14px">Link your account to an existing manager name in a league. Useful for legacy-migrated leagues. Your email becomes the owner of the slot; the manager name stays the same.</p>
+        <div class="error" id="claim-err"></div>
+        <div class="field">
+          <label>League ID</label>
+          <input class="input" id="claim-league-id" placeholder="e.g. andrews-league-2026" value="andrews-league-2026">
+          <div class="input-help">The URL slug of the league — look at the address bar when you view the league.</div>
+        </div>
+        <div class="field">
+          <label>Manager name to claim</label>
+          <input class="input" id="claim-manager" placeholder="e.g. Cali" value="Cali">
+          <div class="input-help">The exact name of the manager slot you want to attach your account to.</div>
+        </div>
+        <button class="btn btn-primary" style="width:100%" onclick="submitClaim()">Claim slot</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+}
+
+async function submitClaim() {
+  const err = document.getElementById('claim-err');
+  err.textContent = '';
+  const leagueId = document.getElementById('claim-league-id').value.trim();
+  const manager = document.getElementById('claim-manager').value.trim();
+  if (!leagueId || !manager) { err.textContent = 'Both fields are required'; return; }
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'claim', leagueId, manager }),
+    });
+    const res = await r.json();
+    if (!res.ok) { err.textContent = res.error || 'Claim failed'; return; }
+    document.getElementById('claim-modal').remove();
+    // Navigate straight into the claimed league
+    navigate('/league/' + encodeURIComponent(leagueId));
+  } catch (e) {
+    err.textContent = 'Connection failed — try again';
   }
 }
 
