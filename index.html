@@ -1,0 +1,1764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#050810">
+<title>Fantasy HR League</title>
+<link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="3" fill="%232d7a44"/><path d="M 20 33 L 5 17 Q 20 0 35 17 L 20 33 Z" fill="%23bd7a3e"/><path d="M 20 30 L 12 21 L 20 12 L 28 21 Z" fill="%233aa05c"/><rect x="18.5" y="31.5" width="3" height="3" fill="%23f4f1e6"/><rect x="26.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/><rect x="18.5" y="10.5" width="3" height="3" fill="%23f4f1e6"/><rect x="10.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Oswald:wght@500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ── DESIGN TOKENS — modern broadcast palette ── */
+:root {
+  --bg: #050810;
+  --bg-soft: #0a0f1c;
+  --panel: rgba(13, 22, 41, 0.85);
+  --panel-solid: #0f1828;
+  --panel-border: rgba(255,255,255,0.07);
+  --panel-border-strong: rgba(255,255,255,0.14);
+  --text: #f3f4f6;
+  --text-dim: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-faint: #6b7280;
+  --accent: #f0c75e;
+  --accent-dim: #c5a04a;
+  --blue: #60a5fa;
+  --blue-deep: #1e3a8a;
+  --green: #3aa05c;
+  --green-deep: #1a4a2e;
+  --red: #ef4444;
+  --orange: #fb923c;
+  --grass: #2d7a44;
+  --dirt: #bd7a3e;
+  --base: #f4f1e6;
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+button { font-family: inherit; cursor: pointer; }
+input, select { font-family: inherit; }
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── DIAMOND BACKDROP (sits on body for every page) ── */
+.diamond-bg {
+  position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 0;
+}
+.diamond-bg::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse 80% 50% at 50% 100%, rgba(45,122,68,0.4) 0%, rgba(45,122,68,0.18) 35%, transparent 70%);
+}
+.diamond-bg::after {
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 400px 220px at 8% -10%, rgba(255,240,200,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 400px 220px at 92% -10%, rgba(255,240,200,0.07) 0%, transparent 60%);
+}
+.diamond-bg svg { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); width: 90%; max-width: 900px; opacity: 0.55; }
+.diamond-vignette {
+  position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  background: radial-gradient(ellipse at 50% 30%, transparent 0%, rgba(5,8,16,0.55) 80%);
+}
+
+/* ── HEADER ── */
+.site-header {
+  position: relative; z-index: 10;
+  background: rgba(5,8,16,0.85);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--panel-border);
+  padding: 12px 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; min-height: 60px;
+  flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.brand-title {
+  font-family: 'Inter', sans-serif;
+  font-size: 15px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.08em; text-transform: uppercase;
+  white-space: nowrap;
+}
+.brand-title em { font-style: normal; color: var(--accent); }
+.header-right { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+.account-chip {
+  font-size: 12px; color: var(--accent);
+  font-family: 'Roboto Mono', monospace;
+  white-space: nowrap;
+  display: flex; align-items: center; gap: 8px;
+}
+.admin-badge {
+  background: var(--accent); color: var(--bg);
+  padding: 1px 6px; border-radius: 3px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+}
+.sync-status {
+  font-size: 11px; color: var(--text-muted);
+  font-family: 'Roboto Mono', monospace;
+  display: flex; align-items: center; gap: 6px;
+  flex: 1 1 auto; min-width: 0;
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sync-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint);
+  flex-shrink: 0;
+}
+.sync-dot.live { background: var(--green); box-shadow: 0 0 0 3px rgba(58,160,92,0.2); }
+.sync-dot.loading { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.sync-dot.err { background: var(--red); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+@media (max-width: 720px) {
+  .site-header { padding: 10px 14px; gap: 8px; }
+  .brand-title { font-size: 13px; }
+  .sync-status { font-size: 10px; max-width: 130px; }
+}
+
+/* ── BUTTONS ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border: 1px solid var(--panel-border-strong); border-radius: 6px;
+  background: var(--panel-solid); color: var(--text);
+  font-size: 13px; font-weight: 500;
+  transition: all 0.12s;
+}
+.btn:hover { background: #1a2540; border-color: var(--blue); }
+.btn-primary {
+  background: var(--accent); color: var(--bg); border-color: var(--accent);
+  font-weight: 600;
+}
+.btn-primary:hover { background: var(--accent-dim); border-color: var(--accent-dim); }
+.btn-sm { padding: 5px 11px; font-size: 12px; }
+.btn-danger { color: var(--red); border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+.btn-danger:hover { background: rgba(239,68,68,0.15); }
+.btn-ghost { background: transparent; border-color: var(--panel-border-strong); }
+
+/* ── LAYOUT ── */
+.page { position: relative; z-index: 2; padding: 24px 20px; min-height: calc(100vh - 60px); }
+.container { max-width: 1100px; margin: 0 auto; }
+.page-title {
+  font-family: 'Oswald', sans-serif; font-size: 28px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.06em; text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.page-subtitle { font-size: 14px; color: var(--text-muted); margin-bottom: 24px; }
+
+/* ── PANELS ── */
+.panel {
+  background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.panel-header {
+  padding: 12px 18px;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid var(--panel-border);
+  font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.08em; text-transform: uppercase;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+}
+.panel-body { padding: 16px 18px; }
+
+/* ── NAV TABS ── */
+.tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--panel-border);
+  margin-bottom: 18px; overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  padding: 10px 16px; background: none; border: none;
+  font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600;
+  color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:hover { color: var(--text); }
+
+/* ── FORMS ── */
+.field { margin-bottom: 14px; }
+.field label {
+  display: block; font-size: 11px; color: var(--text-muted);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  margin-bottom: 5px; font-weight: 500;
+}
+.input, .select {
+  width: 100%; padding: 9px 12px;
+  background: rgba(0,0,0,0.3); color: var(--text);
+  border: 1px solid var(--panel-border-strong); border-radius: 6px;
+  font-size: 14px;
+}
+.input:focus, .select:focus { outline: none; border-color: var(--blue); background: rgba(0,0,0,0.5); }
+.input.compact { padding: 6px 10px; font-size: 13px; }
+.input-help { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+.error { color: var(--red); font-size: 12px; min-height: 16px; margin-bottom: 8px; }
+
+/* ── HOMEPAGE HERO ── */
+.hero { text-align: center; padding: 60px 20px 40px; position: relative; z-index: 2; }
+.hero-eyebrow {
+  font-family: 'Oswald', sans-serif; font-size: 12px;
+  color: var(--accent); letter-spacing: 0.18em; text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.hero-title {
+  font-family: 'Oswald', sans-serif;
+  font-size: clamp(36px, 7vw, 64px); font-weight: 700;
+  color: var(--text); letter-spacing: 0.02em; line-height: 1.05;
+  margin-bottom: 14px;
+}
+.hero-title em { font-style: normal; color: var(--accent); }
+.hero-sub {
+  font-size: clamp(15px, 2vw, 19px); color: var(--text-dim);
+  max-width: 580px; margin: 0 auto 28px; line-height: 1.5;
+}
+.hero-cta { display: inline-flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.hero-cta .btn { padding: 12px 22px; font-size: 14px; }
+
+.feature-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px; max-width: 920px; margin: 36px auto 0; padding: 0 20px;
+}
+.feature {
+  background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.feature-icon { font-size: 22px; margin-bottom: 8px; }
+.feature-title {
+  font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.06em; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.feature-body { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+/* ── STANDINGS CARDS ── */
+.stat-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px; margin-bottom: 18px;
+}
+.stat-card {
+  background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--panel-border); border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.stat-card.lead {
+  background: rgba(26, 47, 89, 0.85);
+  border-color: rgba(96, 165, 250, 0.45);
+  box-shadow: 0 0 0 1px rgba(96,165,250,0.12), 0 4px 20px rgba(96,165,250,0.18);
+}
+.stat-card.lead .stat-num { color: var(--blue); }
+.stat-pos {
+  font-size: 10px; color: var(--text-muted);
+  letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+  margin-bottom: 4px;
+}
+.stat-mgr { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.stat-num { font-size: 32px; font-weight: 700; line-height: 1; color: var(--text); font-feature-settings: 'tnum'; }
+.stat-sub { font-size: 10px; color: var(--text-faint); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* ── DATA TABLE ── */
+.data-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 13px; color: var(--text-dim);
+}
+.data-table th {
+  text-align: left; padding: 9px 12px;
+  font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 600;
+  color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase;
+  border-bottom: 1px solid var(--panel-border);
+  background: rgba(0,0,0,0.2);
+}
+.data-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table .right { text-align: right; }
+.data-table strong { color: var(--text); font-weight: 600; }
+
+.team-chip {
+  display: inline-block; font-family: 'Roboto Mono', monospace; font-size: 10px;
+  padding: 2px 7px; background: rgba(255,255,255,0.08); color: var(--text-muted);
+  border-radius: 4px;
+}
+.pos-chip {
+  display: inline-block; font-family: 'Roboto Mono', monospace; font-size: 10px;
+  padding: 2px 7px; background: rgba(96,165,250,0.12); color: var(--blue);
+  border-radius: 4px;
+}
+.fire-chip { color: var(--orange); font-size: 11px; font-weight: 600; margin-left: 6px; }
+.ice-chip { color: var(--blue); font-size: 11px; font-weight: 600; margin-left: 6px; opacity: 0.8; }
+
+/* ── ROSTER SLOT INPUTS ── */
+.slot-input {
+  background: rgba(0,0,0,0.3); color: var(--text);
+  border: 1px solid var(--panel-border-strong); border-radius: 5px;
+  padding: 6px 9px; font-size: 13px; width: 100%;
+}
+.slot-input:focus { outline: none; border-color: var(--blue); }
+.slot-input:disabled { opacity: 0.4; cursor: not-allowed; }
+.hr-input {
+  width: 60px; text-align: center;
+  background: rgba(0,0,0,0.3); color: var(--text);
+  border: 1px solid var(--panel-border-strong); border-radius: 5px;
+  padding: 5px 6px; font-size: 13px;
+  font-family: 'Roboto Mono', monospace; font-weight: 600;
+}
+.hr-input:disabled { opacity: 0.4; cursor: not-allowed; background: transparent; border-color: transparent; color: var(--text); font-weight: 700; }
+
+/* ── ONBOARDING CHECKLIST ── */
+.onboard {
+  background: linear-gradient(135deg, rgba(240,199,94,0.08), rgba(240,199,94,0.02));
+  border: 1px solid rgba(240,199,94,0.25);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  margin-bottom: 20px;
+}
+.onboard-title {
+  font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600;
+  color: var(--accent); letter-spacing: 0.08em; text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.onboard-sub { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
+.onboard-step {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 10px 0; border-bottom: 1px dashed rgba(240,199,94,0.15);
+}
+.onboard-step:last-child { border-bottom: none; }
+.onboard-check {
+  width: 22px; height: 22px; flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: transparent;
+}
+.onboard-step.done .onboard-check {
+  background: var(--green); border-color: var(--green); color: white;
+}
+.onboard-step-body { flex: 1; min-width: 0; }
+.onboard-step-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.onboard-step.done .onboard-step-title { color: var(--text-muted); text-decoration: line-through; text-decoration-color: rgba(148,163,184,0.4); }
+.onboard-step-help { font-size: 12px; color: var(--text-muted); line-height: 1.45; }
+.onboard-step-action { margin-top: 8px; }
+
+/* ── INVITE BOX ── */
+.invite-box {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius);
+  padding: 12px; margin-top: 10px;
+}
+.invite-url {
+  font-family: 'Roboto Mono', monospace; font-size: 12px;
+  color: var(--text-dim); word-break: break-all;
+  user-select: all;
+  padding: 8px 10px; background: rgba(0,0,0,0.4); border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+/* ── PENDING REQUESTS QUEUE ── */
+.pending-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; gap: 12px; flex-wrap: wrap;
+  border-bottom: 1px dashed var(--panel-border);
+}
+.pending-row:last-child { border-bottom: none; }
+.pending-info { flex: 1; min-width: 0; }
+.pending-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.pending-email { font-size: 12px; color: var(--text-muted); font-family: 'Roboto Mono', monospace; }
+.pending-actions { display: flex; gap: 6px; }
+
+/* ── LEAGUE PICKER CARDS ── */
+.league-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px; margin-top: 18px;
+}
+.league-card {
+  background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  padding: 18px; cursor: pointer;
+  transition: all 0.12s;
+  text-align: left; display: block; width: 100%;
+  color: inherit; font: inherit;
+}
+.league-card:hover { border-color: var(--blue); transform: translateY(-1px); }
+.league-card-name {
+  font-family: 'Oswald', sans-serif; font-size: 17px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.04em; text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.league-card-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+.league-card-pending {
+  display: inline-block; background: rgba(240,199,94,0.15);
+  border: 1px solid rgba(240,199,94,0.35);
+  color: var(--accent);
+  font-size: 11px; font-weight: 500;
+  padding: 2px 8px; border-radius: 3px;
+  font-family: 'Roboto Mono', monospace;
+}
+.league-card-status {
+  display: inline-block;
+  background: rgba(58,160,92,0.18); border: 1px solid rgba(58,160,92,0.35); color: var(--green);
+  font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 3px; margin-right: 6px;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.league-card-status.commish { background: rgba(240,199,94,0.18); border-color: rgba(240,199,94,0.35); color: var(--accent); }
+.league-card-status.pending { background: rgba(148,163,184,0.18); border-color: rgba(148,163,184,0.35); color: var(--text-muted); }
+
+/* ── AUTH SCREENS ── */
+.auth-shell {
+  max-width: 420px; margin: 80px auto 40px; padding: 0 20px;
+}
+.auth-panel {
+  background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+}
+.auth-tabs { display: flex; gap: 0; margin-bottom: 18px; border-bottom: 1px solid var(--panel-border); }
+.auth-tab {
+  flex: 1; padding: 10px; background: none; border: none;
+  font-family: 'Oswald', sans-serif; font-size: 13px; font-weight: 600;
+  color: var(--text-muted); letter-spacing: 0.06em; text-transform: uppercase;
+  border-bottom: 2px solid transparent;
+}
+.auth-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.auth-title {
+  font-family: 'Oswald', sans-serif; font-size: 20px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.04em; text-transform: uppercase;
+  text-align: center; margin-bottom: 6px;
+}
+.auth-sub { font-size: 13px; color: var(--text-muted); text-align: center; margin-bottom: 22px; }
+.auth-divider {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 11px; color: var(--text-faint);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  margin: 18px 0 14px;
+}
+.auth-divider::before, .auth-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--panel-border);
+}
+
+/* ── MODAL ── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(5,8,16,0.85); backdrop-filter: blur(6px);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--panel-solid); color: var(--text);
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius-lg);
+  max-width: 480px; width: 100%;
+  overflow: hidden;
+}
+.modal-head {
+  padding: 14px 20px; border-bottom: 1px solid var(--panel-border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.modal-head-title {
+  font-family: 'Oswald', sans-serif; font-size: 14px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.modal-close {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 22px; line-height: 1; padding: 0; cursor: pointer;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 20px; }
+
+/* ── HISTORY ── */
+.history-list { max-height: 540px; overflow-y: auto; }
+.history-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; border-bottom: 1px dashed var(--panel-border);
+  flex-wrap: wrap;
+}
+.history-row:last-child { border-bottom: none; }
+.history-delta {
+  font-family: 'Roboto Mono', monospace; font-size: 13px; font-weight: 600;
+  color: var(--green); white-space: nowrap;
+}
+.history-delta.neg { color: var(--red); }
+.history-when {
+  font-family: 'Roboto Mono', monospace; font-size: 11px;
+  color: var(--text-faint); white-space: nowrap;
+}
+.history-src {
+  font-size: 10px;
+  background: rgba(255,255,255,0.06); color: var(--text-muted);
+  padding: 2px 7px; border-radius: 3px;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+
+/* ── EMPTY STATES ── */
+.empty-state {
+  text-align: center; padding: 40px 20px; color: var(--text-muted);
+}
+.empty-state-title { font-size: 16px; color: var(--text); margin-bottom: 4px; font-weight: 600; }
+.empty-state-body { font-size: 13px; }
+
+/* ── SETTINGS GRID ── */
+.settings-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  margin-bottom: 14px;
+}
+@media (max-width: 600px) {
+  .settings-row { grid-template-columns: 1fr; }
+}
+
+/* ── ALERTS ── */
+.notice {
+  padding: 12px 14px; border-radius: 6px;
+  font-size: 13px; line-height: 1.5;
+  margin-bottom: 14px;
+  border: 1px solid;
+}
+.notice.info { background: rgba(96,165,250,0.08); border-color: rgba(96,165,250,0.3); color: var(--text-dim); }
+.notice.success { background: rgba(58,160,92,0.08); border-color: rgba(58,160,92,0.3); color: var(--text-dim); }
+.notice.warn { background: rgba(240,199,94,0.08); border-color: rgba(240,199,94,0.3); color: var(--text-dim); }
+.notice.err { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.3); color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<!-- ── DIAMOND BACKDROP ── -->
+<div class="diamond-bg">
+  <svg viewBox="0 0 700 500" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+    <path d="M 50 480 Q 350 80 650 480 L 350 480 Z" fill="#1a4a2e" opacity="0.65"/>
+    <path d="M 350 470 L 110 280 Q 350 70 590 280 L 350 470 Z" fill="#7a5a3a" opacity="0.7"/>
+    <path d="M 350 440 L 220 280 L 350 120 L 480 280 Z" fill="#2d7a44" opacity="0.7"/>
+    <ellipse cx="350" cy="280" rx="26" ry="13" fill="#9b7a4e" opacity="0.75"/>
+    <circle cx="350" cy="280" r="4" fill="#f4f1e6" opacity="0.7"/>
+    <rect x="343" y="433" width="14" height="14" transform="rotate(45 350 440)" fill="#f4f1e6" opacity="0.9"/>
+    <rect x="473" y="273" width="14" height="14" transform="rotate(45 480 280)" fill="#f4f1e6" opacity="0.9"/>
+    <rect x="343" y="113" width="14" height="14" transform="rotate(45 350 120)" fill="#f4f1e6" opacity="0.9"/>
+    <rect x="213" y="273" width="14" height="14" transform="rotate(45 220 280)" fill="#f4f1e6" opacity="0.9"/>
+    <line x1="350" y1="470" x2="70" y2="200" stroke="#f4f1e6" stroke-width="2.5" opacity="0.45"/>
+    <line x1="350" y1="470" x2="630" y2="200" stroke="#f4f1e6" stroke-width="2.5" opacity="0.45"/>
+    <path d="M 60 200 Q 350 40 640 200" stroke="#0d2818" stroke-width="5" fill="none" opacity="0.5"/>
+    <rect x="105" y="445" width="62" height="16" rx="2" fill="#1a1a1a" opacity="0.65"/>
+    <rect x="533" y="445" width="62" height="16" rx="2" fill="#1a1a1a" opacity="0.65"/>
+  </svg>
+</div>
+<div class="diamond-vignette"></div>
+
+<!-- ── HEADER ── -->
+<header class="site-header">
+  <div class="brand" onclick="navigate('/')">
+    <svg width="36" height="36" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-label="Fantasy HR League">
+      <rect width="40" height="40" rx="3" fill="#2d7a44"/>
+      <path d="M 20 33 L 5 17 Q 20 0 35 17 L 20 33 Z" fill="#bd7a3e"/>
+      <path d="M 20 30 L 12 21 L 20 12 L 28 21 Z" fill="#3aa05c"/>
+      <line x1="20" y1="33" x2="3" y2="16" stroke="#f4f1e6" stroke-width="0.6"/>
+      <line x1="20" y1="33" x2="37" y2="16" stroke="#f4f1e6" stroke-width="0.6"/>
+      <circle cx="20" cy="21" r="1.5" fill="#bd9a6e"/>
+      <rect x="18.5" y="31.5" width="3" height="3" fill="#f4f1e6"/>
+      <rect x="26.5" y="19.5" width="3" height="3" fill="#f4f1e6"/>
+      <rect x="18.5" y="10.5" width="3" height="3" fill="#f4f1e6"/>
+      <rect x="10.5" y="19.5" width="3" height="3" fill="#f4f1e6"/>
+    </svg>
+    <span class="brand-title">Fantasy <em>HR</em> League</span>
+  </div>
+  <div class="header-right">
+    <div class="sync-status" id="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-msg"></span></div>
+    <button class="btn btn-sm" id="sync-btn" onclick="syncCurrentLeague()" style="display:none">⟳ Sync</button>
+    <span class="account-chip" id="account-chip"></span>
+    <button class="btn btn-sm" id="account-btn" onclick="onAccountBtn()">Sign in</button>
+  </div>
+</header>
+
+<div id="view" class="page"></div>
+
+<div class="modal-overlay" id="auth-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-head-title" id="auth-modal-title">Sign in</span>
+      <button class="modal-close" onclick="closeAuth()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="auth-tab-login" onclick="setAuthMode('login')">Sign in</button>
+        <button class="auth-tab" id="auth-tab-signup" onclick="setAuthMode('signup')">Create account</button>
+      </div>
+      <div class="error" id="auth-error"></div>
+      <div class="field" id="signup-display-field" style="display:none">
+        <label>Display name</label>
+        <input class="input" id="auth-display" placeholder="What should we call you?" autocomplete="name">
+        <div class="input-help">Just for your account — manager names are picked per league.</div>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input class="input" type="email" id="auth-email" autocomplete="email" autocapitalize="off" autocorrect="off">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input class="input" type="password" id="auth-password" autocomplete="current-password">
+        <div class="input-help" id="signup-pw-help" style="display:none">At least 6 characters.</div>
+      </div>
+      <button class="btn btn-primary" style="width:100%" id="auth-submit" onclick="submitAuth()">Sign in</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_AUTH = '/.netlify/functions/auth';
+const API_LEAGUE = '/.netlify/functions/league';
+const API_JOIN = '/.netlify/functions/join';
+const API_SYNC = '/.netlify/functions/run-sync';
+const API_DRAFT = '/.netlify/functions/draft';
+const API_PUSH = '/.netlify/functions/push';
+
+let SESSION = null;
+try { SESSION = JSON.parse(localStorage.getItem('fhr_v7_session')) || null; } catch(e){}
+function setSession(s) {
+  SESSION = s;
+  if (s) localStorage.setItem('fhr_v7_session', JSON.stringify(s));
+  else localStorage.removeItem('fhr_v7_session');
+  renderAccountChip();
+}
+function authHeaders() { return SESSION ? { 'Authorization': 'Bearer ' + SESSION.token } : {}; }
+
+let _bannerLastTs = null;
+let _bannerTicker = null;
+function relTime(ts) {
+  if (!ts) return 'just now';
+  const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (sec < 30) return 'just now';
+  if (sec < 90) return '1 min ago';
+  if (sec < 3600) return Math.floor(sec/60) + ' min ago';
+  if (sec < 86400) return Math.floor(sec/3600) + ' hr ago';
+  return new Date(ts).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+function setSyncUI(state, msg, opts) {
+  const dot = document.getElementById('sync-dot');
+  const m = document.getElementById('sync-msg');
+  if (!dot || !m) return;
+  dot.className = 'sync-dot ' + (state==='live'?'live':state==='loading'?'loading':state==='err'?'err':'');
+  if (opts?.serverTs) {
+    _bannerLastTs = opts.serverTs;
+    m.textContent = (msg || 'Synced') + ' · ' + relTime(_bannerLastTs);
+  } else if (state === 'live' && !msg && _bannerLastTs) {
+    m.textContent = 'Synced ' + relTime(_bannerLastTs);
+  } else {
+    m.textContent = msg || '';
+  }
+}
+function startBannerTicker() {
+  if (_bannerTicker) return;
+  _bannerTicker = setInterval(() => {
+    if (!_bannerLastTs) return;
+    const dot = document.getElementById('sync-dot');
+    const m = document.getElementById('sync-msg');
+    if (dot && m && dot.classList.contains('live')) {
+      m.textContent = 'Synced ' + relTime(_bannerLastTs);
+    }
+  }, 10000);
+}
+
+function renderAccountChip() {
+  const chip = document.getElementById('account-chip');
+  const btn = document.getElementById('account-btn');
+  if (!chip || !btn) return;
+  if (SESSION) {
+    chip.innerHTML = escapeHtml(SESSION.displayName || SESSION.email) +
+      (SESSION.isAdmin ? ' <span class="admin-badge">ADMIN</span>' : '');
+    btn.textContent = 'Sign out';
+  } else {
+    chip.textContent = '';
+    btn.textContent = 'Sign in';
+  }
+}
+function onAccountBtn() {
+  if (SESSION) {
+    fetch(API_AUTH, {method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body: JSON.stringify({action:'logout'})}).catch(()=>{});
+    setSession(null);
+    navigate('/');
+  } else {
+    openAuth('login');
+  }
+}
+
+let _authMode = 'login';
+let _authReturnTo = null;
+function openAuth(mode = 'login', returnTo = null) {
+  _authReturnTo = returnTo;
+  document.getElementById('auth-modal').classList.add('open');
+  setAuthMode(mode);
+  document.getElementById('auth-error').textContent = '';
+  document.getElementById('auth-email').value = '';
+  document.getElementById('auth-password').value = '';
+  document.getElementById('auth-display').value = '';
+  setTimeout(() => document.getElementById('auth-email').focus(), 100);
+}
+function closeAuth() { document.getElementById('auth-modal').classList.remove('open'); }
+function setAuthMode(mode) {
+  _authMode = mode;
+  document.getElementById('auth-tab-login').classList.toggle('active', mode === 'login');
+  document.getElementById('auth-tab-signup').classList.toggle('active', mode === 'signup');
+  document.getElementById('auth-modal-title').textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+  document.getElementById('auth-submit').textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+  document.getElementById('signup-display-field').style.display = mode === 'signup' ? 'block' : 'none';
+  document.getElementById('signup-pw-help').style.display = mode === 'signup' ? 'block' : 'none';
+  document.getElementById('auth-password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+  document.getElementById('auth-error').textContent = '';
+}
+async function submitAuth() {
+  const errEl = document.getElementById('auth-error');
+  errEl.textContent = '';
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const displayName = document.getElementById('auth-display').value.trim();
+  const body = _authMode === 'signup'
+    ? { action:'signup', email, password, displayName }
+    : { action:'login', email, password };
+  try {
+    const r = await fetch(API_AUTH, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const res = await r.json();
+    if (!res.ok) { errEl.textContent = res.error || 'Something went wrong'; return; }
+    setSession({ token: res.token, email: res.email, displayName: res.displayName, isAdmin: !!res.isAdmin });
+    closeAuth();
+    if (_authReturnTo) {
+      const dest = _authReturnTo;
+      _authReturnTo = null;
+      navigate(dest);
+    } else {
+      navigate('/');
+    }
+  } catch (e) {
+    errEl.textContent = 'Connection failed — try again';
+  }
+}
+
+async function navigate(path, replace = false) {
+  if (replace) history.replaceState({}, '', path);
+  else history.pushState({}, '', path);
+  await renderRoute();
+}
+window.addEventListener('popstate', renderRoute);
+
+async function renderRoute() {
+  const path = location.pathname;
+  document.getElementById('sync-btn').style.display = 'none';
+  setSyncUI('', '');
+
+  if (path === '/' || path === '') {
+    return SESSION ? renderMyLeagues() : renderHomepage();
+  }
+  if (path === '/new') {
+    if (!SESSION) { openAuth('signup', '/new'); return renderHomepage(); }
+    return renderNewLeague();
+  }
+  const joinMatch = path.match(/^\/join\/([^/]+)\/?$/);
+  if (joinMatch) return renderJoinPage(joinMatch[1]);
+  const leagueMatch = path.match(/^\/league\/([^/]+)(?:\/(draft|history|settings|edit|standings))?\/?$/);
+  if (leagueMatch) return renderLeague(leagueMatch[1], leagueMatch[2] || 'scoreboard');
+  return render404();
+}
+
+function renderHomepage() {
+  const v = document.getElementById('view');
+  v.innerHTML = `
+    <div class="hero">
+      <div class="hero-eyebrow">Start your own league in 30 seconds</div>
+      <h1 class="hero-title">Fantasy <em>Home Run</em> League</h1>
+      <p class="hero-sub">Draft hitters, sync stats in real-time from the official MLB feed, get push notifications when your players go yard. Free, simple, built for friends.</p>
+      <div class="hero-cta">
+        <button class="btn btn-primary" onclick="onCreateClick()">Start a league</button>
+        <button class="btn btn-ghost" onclick="openAuth('login')">I have an account</button>
+      </div>
+    </div>
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="feature-icon">⚾</div>
+        <div class="feature-title">Live HR Tracking</div>
+        <div class="feature-body">Stats pull from the official MLB Stats API. Your scoreboard updates within minutes of every home run, automatically.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🚀</div>
+        <div class="feature-title">Push Notifications</div>
+        <div class="feature-body">Get a celebratory ping the moment one of your players homers. Optional notifications for every HR league-wide.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📋</div>
+        <div class="feature-title">Monthly Drafts</div>
+        <div class="feature-body">Built-in draft room with reverse-standings order. See who's taken, who's on the clock, who's available — all in one place.</div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🛠️</div>
+        <div class="feature-title">Your Rules</div>
+        <div class="feature-body">Roster size, position rules, team uniqueness — every league configures it their way. Commissioner has full control.</div>
+      </div>
+    </div>
+  `;
+}
+
+function onCreateClick() {
+  if (!SESSION) openAuth('signup', '/new');
+  else navigate('/new');
+}
+
+async function renderMyLeagues() {
+  const v = document.getElementById('view');
+  v.innerHTML = `
+    <div class="container">
+      <h1 class="page-title">My Leagues</h1>
+      <p class="page-subtitle">Welcome back, ${escapeHtml(SESSION.displayName || SESSION.email)}.</p>
+      <div id="my-leagues-list"><p class="page-subtitle">Loading…</p></div>
+      <div style="margin-top: 18px">
+        <button class="btn btn-primary" onclick="navigate('/new')">+ Start a new league</button>
+      </div>
+    </div>
+  `;
+  try {
+    const r = await fetch(API_LEAGUE, { headers: authHeaders(), cache: 'no-store' });
+    const data = await r.json();
+    const list = document.getElementById('my-leagues-list');
+    if (!data.leagues || !data.leagues.length) {
+      list.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-title">You're not in any leagues yet</div>
+          <div class="empty-state-body">Start your own with the button below, or use an invite link from a friend.</div>
+        </div>
+      `;
+      return;
+    }
+    list.innerHTML = `<div class="league-grid">${data.leagues.map(lg => `
+      <button class="league-card" onclick="navigate('/league/${encodeURIComponent(lg.id)}')">
+        <div class="league-card-name">${escapeHtml(lg.name)}</div>
+        <div class="league-card-meta">
+          ${lg.isCommissioner ? '<span class="league-card-status commish">Commissioner</span>' : ''}
+          ${lg.myStatus === 'pending' ? '<span class="league-card-status pending">Pending</span>' : ''}
+          ${lg.myStatus === 'active' && !lg.isCommissioner ? `<span class="league-card-status">Manager: ${escapeHtml(lg.myManager)}</span>` : ''}
+          ${lg.memberCount} member${lg.memberCount === 1 ? '' : 's'}
+          ${lg.pendingCount ? ` · <span class="league-card-pending">${lg.pendingCount} pending</span>` : ''}
+        </div>
+      </button>
+    `).join('')}</div>`;
+  } catch (e) {
+    document.getElementById('my-leagues-list').innerHTML = '<div class="notice err">Couldn\'t load your leagues — try refreshing.</div>';
+  }
+}
+
+function renderNewLeague() {
+  const v = document.getElementById('view');
+  v.innerHTML = `
+    <div class="auth-shell">
+      <div class="auth-panel">
+        <div class="auth-title">Start a new league</div>
+        <p class="auth-sub">Defaults match a 6-player monthly-HR league. You can change everything later.</p>
+        <div class="error" id="new-league-err"></div>
+        <div class="field">
+          <label>League name</label>
+          <input class="input" id="new-league-name" placeholder="e.g. Sunday Sluggers" maxlength="60">
+        </div>
+        <div class="field">
+          <label>Your manager name (what your team is called)</label>
+          <input class="input" id="new-league-manager" placeholder="e.g. ${escapeHtml(SESSION?.displayName || 'My Team')}" maxlength="30" value="${escapeHtml(SESSION?.displayName || '')}">
+        </div>
+        <button class="btn btn-primary" style="width:100%" onclick="submitNewLeague()">Create league</button>
+        <p class="input-help" style="margin-top:14px;text-align:center">You'll get an invite link to share. Friends join, you approve them, everyone drafts.</p>
+      </div>
+    </div>
+  `;
+}
+async function submitNewLeague() {
+  const err = document.getElementById('new-league-err');
+  err.textContent = '';
+  const name = document.getElementById('new-league-name').value.trim();
+  const managerName = document.getElementById('new-league-manager').value.trim();
+  if (!name) { err.textContent = 'League name is required'; return; }
+  if (!managerName) { err.textContent = 'Manager name is required'; return; }
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({action:'create', name, managerName}),
+    });
+    const res = await r.json();
+    if (!res.ok) { err.textContent = res.error || 'Could not create league'; return; }
+    navigate('/league/' + encodeURIComponent(res.league.id));
+  } catch (e) {
+    err.textContent = 'Connection failed';
+  }
+}
+
+async function renderJoinPage(token) {
+  const v = document.getElementById('view');
+  v.innerHTML = `<div class="auth-shell"><div class="auth-panel"><p class="page-subtitle">Loading invite…</p></div></div>`;
+  try {
+    const r = await fetch(API_LEAGUE + '?invite=' + encodeURIComponent(token), { cache: 'no-store' });
+    const res = await r.json();
+    if (!res.ok) {
+      v.innerHTML = `<div class="auth-shell"><div class="auth-panel"><div class="auth-title">Invite not found</div><p class="auth-sub">This invite link is invalid or has been replaced. Ask your commissioner for a fresh one.</p></div></div>`;
+      return;
+    }
+    if (!SESSION) {
+      v.innerHTML = `
+        <div class="auth-shell">
+          <div class="auth-panel">
+            <div class="auth-title">Join ${escapeHtml(res.league.name)}</div>
+            <p class="auth-sub">${res.league.managerCount} manager${res.league.managerCount === 1 ? '' : 's'} already in this league.</p>
+            <button class="btn btn-primary" style="width:100%" onclick="openAuth('signup','/join/${encodeURIComponent(token)}')">Create account &amp; join</button>
+            <div class="auth-divider">Already have an account?</div>
+            <button class="btn btn-ghost" style="width:100%" onclick="openAuth('login','/join/${encodeURIComponent(token)}')">Sign in</button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+    v.innerHTML = `
+      <div class="auth-shell">
+        <div class="auth-panel">
+          <div class="auth-title">Join ${escapeHtml(res.league.name)}</div>
+          <p class="auth-sub">Pick what your team is called in this league.</p>
+          <div class="error" id="join-err"></div>
+          <div class="field">
+            <label>Manager name</label>
+            <input class="input" id="join-manager" maxlength="30" value="${escapeHtml(SESSION.displayName || '')}">
+          </div>
+          <button class="btn btn-primary" style="width:100%" onclick="submitJoin('${escapeAttr(token)}')">Request to join</button>
+          <p class="input-help" style="margin-top:12px;text-align:center">The commissioner will see your request and approve it.</p>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    v.innerHTML = `<div class="auth-shell"><div class="auth-panel"><div class="notice err">Couldn't reach the server.</div></div></div>`;
+  }
+}
+async function submitJoin(token) {
+  const err = document.getElementById('join-err');
+  err.textContent = '';
+  const managerName = document.getElementById('join-manager').value.trim();
+  if (!managerName) { err.textContent = 'Manager name required'; return; }
+  try {
+    const r = await fetch(API_JOIN, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({inviteToken: token, managerName}),
+    });
+    const res = await r.json();
+    if (!res.ok) { err.textContent = res.error || 'Could not join'; return; }
+    navigate('/league/' + encodeURIComponent(res.leagueId));
+  } catch (e) {
+    err.textContent = 'Connection failed';
+  }
+}
+
+let CURRENT_LEAGUE = null;
+let CURRENT_TAB = 'scoreboard';
+let _pollTimer = null;
+
+async function renderLeague(leagueId, tab) {
+  CURRENT_TAB = tab || 'scoreboard';
+  document.getElementById('sync-btn').style.display = SESSION ? '' : 'none';
+  setSyncUI('loading', 'Loading league…');
+  try {
+    const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(leagueId), { headers: authHeaders(), cache: 'no-store' });
+    const res = await r.json();
+    if (!res.ok) {
+      document.getElementById('view').innerHTML = `<div class="container"><div class="notice err">${escapeHtml(res.error)}</div></div>`;
+      setSyncUI('err', 'League not found');
+      return;
+    }
+    CURRENT_LEAGUE = res;
+    if (CURRENT_LEAGUE.league.lastSync) {
+      setSyncUI('live', 'Synced', { serverTs: CURRENT_LEAGUE.league.lastSync });
+    } else {
+      setSyncUI('live', 'Synced · not yet');
+    }
+    startBannerTicker();
+    renderLeagueShell();
+    startLeaguePolling();
+  } catch (e) {
+    setSyncUI('err', 'Connection failed');
+    document.getElementById('view').innerHTML = `<div class="container"><div class="notice err">Couldn't load the league.</div></div>`;
+  }
+}
+
+function startLeaguePolling() {
+  if (_pollTimer) clearInterval(_pollTimer);
+  _pollTimer = setInterval(async () => {
+    if (!CURRENT_LEAGUE || document.hidden) return;
+    const el = document.activeElement;
+    if (el && el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'number')) return;
+    try {
+      const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), { headers: authHeaders(), cache: 'no-store' });
+      const res = await r.json();
+      if (!res.ok) return;
+      CURRENT_LEAGUE = res;
+      if (CURRENT_LEAGUE.league.lastSync) setSyncUI('live', 'Synced', { serverTs: CURRENT_LEAGUE.league.lastSync });
+      renderLeagueShell();
+    } catch {}
+  }, 15000);
+}
+
+function renderLeagueShell() {
+  const { league, myManager, isCommish, isPending } = CURRENT_LEAGUE;
+  const v = document.getElementById('view');
+  const tabs = [
+    { id: 'scoreboard', label: 'Scoreboard' },
+    { id: 'standings',  label: 'Standings' },
+    { id: 'edit',       label: 'Rosters' },
+    { id: 'history',    label: 'History' },
+    { id: 'draft',      label: 'Draft' },
+    { id: 'settings',   label: isCommish ? 'Commissioner' : 'Settings' },
+  ];
+
+  let pendingBanner = '';
+  if (isPending) {
+    pendingBanner = `<div class="notice warn">Your join request is pending the commissioner's approval. You'll see your roster controls as soon as you're approved.</div>`;
+  }
+
+  let signInBanner = '';
+  if (!SESSION) {
+    signInBanner = `<div class="notice info">Viewing as guest — <a href="#" onclick="openAuth('login','${escapeAttr(location.pathname)}');return false">sign in</a> to edit, sync, or make picks.</div>`;
+  }
+
+  v.innerHTML = `
+    <div class="container">
+      <h1 class="page-title">${escapeHtml(league.name)}</h1>
+      <p class="page-subtitle">${league.managers.length} manager${league.managers.length === 1 ? '' : 's'} · ${league.currentMonth} ${isCommish ? '· <span style="color:var(--accent)">You are the commissioner</span>' : myManager ? `· Your team: ${escapeHtml(myManager)}` : ''}</p>
+      ${pendingBanner}
+      ${signInBanner}
+      ${renderOnboardingChecklist()}
+      <div class="tabs">
+        ${tabs.map(t => `<button class="tab ${CURRENT_TAB === t.id ? 'active' : ''}" onclick="navigate('/league/${encodeURIComponent(league.id)}${t.id === 'scoreboard' ? '' : '/' + t.id}')">${t.label}</button>`).join('')}
+      </div>
+      <div id="tab-body"></div>
+    </div>
+  `;
+  renderActiveTab();
+}
+
+function renderOnboardingChecklist() {
+  const { league, isCommish } = CURRENT_LEAGUE;
+  if (!isCommish) return '';
+  const inviteFull = `${location.origin}/join/${league.inviteToken}`;
+  const hasOtherMembers = (league.members || []).filter(m => m.status === 'active').length > 1;
+  const hasPicks = !!(league.draft || (league.months[league.currentMonth] && Object.values(league.months[league.currentMonth].rosters || {}).some(r => r.some(s => s.player))));
+  if (hasOtherMembers && hasPicks) return '';
+
+  const steps = [
+    { done: hasOtherMembers, title: 'Invite your managers',
+      help: 'Share this link. They sign up, you approve them in the Commissioner tab.',
+      action: `<div class="invite-box"><div class="invite-url">${escapeHtml(inviteFull)}</div><button class="btn btn-sm" onclick="copyInvite('${escapeAttr(inviteFull)}')">📋 Copy invite link</button></div>` },
+    { done: false, title: 'Customize league settings (optional)',
+      help: 'Roster size, scoring categories, position and team rules. The defaults match a 6-player monthly HR league.',
+      action: `<button class="btn btn-sm" onclick="navigate('/league/${encodeURIComponent(league.id)}/settings')">Open settings</button>` },
+    { done: hasPicks, title: 'Open your first draft',
+      help: 'When everyone\'s joined, open the draft to fill rosters.',
+      action: `<button class="btn btn-sm" onclick="navigate('/league/${encodeURIComponent(league.id)}/draft')">Open draft room</button>` },
+  ];
+
+  return `
+    <div class="onboard">
+      <div class="onboard-title">Getting started</div>
+      <div class="onboard-sub">A few quick steps to get your league rolling.</div>
+      ${steps.map(s => `
+        <div class="onboard-step ${s.done ? 'done' : ''}">
+          <div class="onboard-check">${s.done ? '✓' : ''}</div>
+          <div class="onboard-step-body">
+            <div class="onboard-step-title">${s.title}</div>
+            <div class="onboard-step-help">${s.help}</div>
+            ${!s.done ? `<div class="onboard-step-action">${s.action}</div>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function copyInvite(url) {
+  try { await navigator.clipboard.writeText(url); alert('Invite link copied'); }
+  catch { prompt('Copy this link:', url); }
+}
+
+function renderActiveTab() {
+  const body = document.getElementById('tab-body');
+  if (!body) return;
+  if (CURRENT_TAB === 'scoreboard') return renderScoreboard(body);
+  if (CURRENT_TAB === 'standings')  return renderStandings(body);
+  if (CURRENT_TAB === 'edit')       return renderRostersEdit(body);
+  if (CURRENT_TAB === 'history')    return renderHistory(body);
+  if (CURRENT_TAB === 'draft')      return renderDraft(body);
+  if (CURRENT_TAB === 'settings')   return renderSettings(body);
+}
+
+function canEditMgrRoster(mgr) {
+  if (!SESSION) return false;
+  if (SESSION.isAdmin) return true;
+  if (CURRENT_LEAGUE.isCommish) return true;
+  return CURRENT_LEAGUE.myManager === mgr;
+}
+
+function renderScoreboard(body) {
+  const { league } = CURRENT_LEAGUE;
+  const key = league.currentMonth;
+  const month = league.months?.[key];
+  if (!month) { body.innerHTML = '<div class="empty-state"><div class="empty-state-title">No active month</div></div>'; return; }
+
+  const totals = league.managers.map(m => ({
+    manager: m,
+    hr: (month.rosters[m] || []).reduce((s, p) => s + (parseInt(p.hr) || 0), 0),
+  })).sort((a, b) => b.hr - a.hr);
+  const max = totals[0]?.hr ?? 0;
+
+  let html = '<div class="stat-grid">';
+  totals.forEach((t, i) => {
+    const isLead = t.hr === max && max > 0;
+    html += `
+      <div class="stat-card ${isLead ? 'lead' : ''}">
+        <div class="stat-pos">${ordinal(i + 1)}</div>
+        <div class="stat-mgr">${escapeHtml(t.manager)}</div>
+        <div class="stat-num">${t.hr}</div>
+        <div class="stat-sub">HR · ${key.split('-')[0]}</div>
+      </div>
+    `;
+  });
+  html += '</div>';
+
+  for (const mgr of league.managers) {
+    const roster = month.rosters[mgr] || [];
+    const total = roster.reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
+    html += `
+      <div class="panel">
+        <div class="panel-header">
+          ${escapeHtml(mgr)}
+          <span style="font-family:'Roboto Mono',monospace;font-size:13px;color:var(--accent)">${total} HR</span>
+        </div>
+        <div class="panel-body" style="padding:0">
+          <table class="data-table">
+            <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th class="right">HR</th></tr></thead>
+            <tbody>
+              ${roster.map((p, idx) => {
+                if (!p.player) return `<tr><td colspan="4" style="color:var(--text-faint);font-style:italic">— slot ${idx + 1} open —</td></tr>`;
+                const nk = normName(p.player);
+                const streak = league.streaks?.[nk];
+                const seasonHint = league.seasonHints?.[nk];
+                const streakBadge = streak >= 2 ? `<span class="fire-chip" title="${streak} HR in last 7 days">🔥</span>` : streak === 0 ? `<span class="ice-chip" title="No HR in last 7 days">🧊</span>` : '';
+                const seasonLine = seasonHint !== undefined ? `<div style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${seasonHint} season</div>` : '';
+                return `<tr>
+                  <td><strong>${escapeHtml(p.player)}</strong>${streakBadge}${seasonLine}</td>
+                  <td><span class="team-chip">${escapeHtml(p.team || '—')}</span></td>
+                  <td><span class="pos-chip">${escapeHtml(p.position || '—')}</span></td>
+                  <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600;color:var(--text)">${p.hr || 0}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+  body.innerHTML = html;
+}
+
+// ── STANDINGS ──
+// Three panels:
+//   1. Monthly Winners (table) — one row per month, leader of that month, HR total.
+//      Ties: both managers shown as co-winners; both get a Win credit (so 2-0-1 = 3 wins for season totals).
+//   2. Season Standings (table) — manager, total HRs across all months, total month-wins.
+//      Sorted by season HR descending; top 3 get medal emojis.
+//   3. Month-by-Month Breakdown (table) — managers × months grid; each cell is THAT month's HR count
+//      for THAT manager (not cumulative). Trophy emoji marks the leader(s) in each month column.
+function renderStandings(body) {
+  const { league } = CURRENT_LEAGUE;
+  const months = Object.keys(league.months || {});
+  if (!months.length) {
+    body.innerHTML = '<div class="empty-state"><div class="empty-state-title">No months yet</div><div class="empty-state-body">Standings will appear once you have at least one month of play.</div></div>';
+    return;
+  }
+  months.sort((a, b) => monthSortKey(a) - monthSortKey(b));
+
+  // Build a lookup: managerTotalsByMonth[month][manager] = HR count
+  const monthTotals = {};
+  const allManagers = new Set();
+  for (const m of months) {
+    const rosters = league.months[m]?.rosters || {};
+    monthTotals[m] = {};
+    for (const [mgr, roster] of Object.entries(rosters)) {
+      allManagers.add(mgr);
+      monthTotals[m][mgr] = (roster || []).reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
+    }
+  }
+  // Include managers that exist in league.managers but might not yet have a roster in some month
+  for (const mgr of (league.managers || [])) allManagers.add(mgr);
+  const managers = [...allManagers];
+
+  // For each month, find all leaders (ties → multiple)
+  const monthlyLeaders = {};
+  for (const m of months) {
+    const totals = monthTotals[m];
+    let max = -1;
+    for (const mgr of managers) {
+      const v = totals[mgr] ?? 0;
+      if (v > max) max = v;
+    }
+    monthlyLeaders[m] = max > 0
+      ? managers.filter(mgr => (totals[mgr] ?? 0) === max)
+      : []; // no leader if max is 0
+  }
+
+  // Season totals: HR sum across months + count of months where this manager was (co-)leader
+  const seasonStats = managers.map(mgr => ({
+    manager: mgr,
+    totalHR: months.reduce((s, m) => s + (monthTotals[m][mgr] ?? 0), 0),
+    wins: months.filter(m => monthlyLeaders[m].includes(mgr)).length,
+  })).sort((a, b) => b.totalHR - a.totalHR);
+
+  // Medal lookup — handles ties in season standings (same totalHR = same medal)
+  const medalFor = (idx, totalHR) => {
+    // Find the first index with this same totalHR — gives consistent medal for tied totals
+    const firstIdxAtSameTotal = seasonStats.findIndex(s => s.totalHR === totalHR);
+    const m = ['🥇','🥈','🥉'];
+    return m[firstIdxAtSameTotal] || '';
+  };
+
+  // ── PANEL 1: Monthly Winners ──
+  const monthlyWinnersRows = months.map(m => {
+    const leaders = monthlyLeaders[m];
+    const max = leaders.length ? monthTotals[m][leaders[0]] : 0;
+    const winnerCell = leaders.length
+      ? leaders.map(mgr => `<span style="display:inline-block;background:var(--accent);color:var(--bg);padding:3px 11px;border-radius:14px;font-weight:700;font-size:12px;letter-spacing:0.04em;margin-right:6px;text-transform:uppercase">${escapeHtml(mgr)}</span>`).join('')
+      : '<span style="color:var(--text-faint);font-style:italic">—</span>';
+    return `<tr>
+      <td>${escapeHtml(m)}</td>
+      <td>${winnerCell}</td>
+      <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600;color:var(--text)">${max || 0}</td>
+    </tr>`;
+  }).join('');
+
+  // ── PANEL 2: Season Standings ──
+  const seasonRows = seasonStats.map((s, i) => `
+    <tr>
+      <td><strong>${medalFor(i, s.totalHR)} ${escapeHtml(s.manager)}</strong></td>
+      <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600;color:var(--text)">${s.totalHR}</td>
+      <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-dim)">${s.wins}</td>
+    </tr>
+  `).join('');
+
+  // ── PANEL 3: Month-by-Month Breakdown ──
+  // Sort managers by season HR descending (matches Season Standings ordering)
+  const breakdownManagers = [...seasonStats];
+  const monthHeaderCells = months.map(m => `<th class="right">${escapeHtml(m.split('-')[0].slice(0,3).toUpperCase())}</th>`).join('');
+  const breakdownRows = breakdownManagers.map(s => {
+    const monthCells = months.map(m => {
+      const hr = monthTotals[m][s.manager] ?? 0;
+      const isLeader = monthlyLeaders[m].includes(s.manager);
+      const trophy = isLeader ? '🏆 ' : '';
+      return `<td class="right" style="font-family:'Roboto Mono',monospace;${isLeader ? 'color:var(--accent);font-weight:600;' : 'color:var(--text-dim);'}">${trophy}${hr}</td>`;
+    }).join('');
+    return `<tr>
+      <td><strong>${escapeHtml(s.manager)}</strong></td>
+      ${monthCells}
+      <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700;color:var(--text);border-left:1px solid var(--panel-border)">${s.totalHR}</td>
+    </tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:16px">
+      <div class="panel" style="margin:0">
+        <div class="panel-header">Monthly Winners</div>
+        <div class="panel-body" style="padding:0">
+          <table class="data-table">
+            <thead><tr><th>Month</th><th>Winner</th><th class="right">HR</th></tr></thead>
+            <tbody>${monthlyWinnersRows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel" style="margin:0">
+        <div class="panel-header">Season Standings</div>
+        <div class="panel-body" style="padding:0">
+          <table class="data-table">
+            <thead><tr><th>Manager</th><th class="right">Total HR</th><th class="right">Wins</th></tr></thead>
+            <tbody>${seasonRows}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">Month-by-Month Breakdown</div>
+      <div class="panel-body" style="padding:0;overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>Manager</th>${monthHeaderCells}<th class="right" style="border-left:1px solid var(--panel-border)">Total</th></tr></thead>
+          <tbody>${breakdownRows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// Helper: chronological sort key for "MonthName-Year" strings.
+// "April-2026" → 2026 * 12 + 3 (April is index 3 zero-based).
+function monthSortKey(key) {
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const [m, y] = key.split('-');
+  return (parseInt(y) || 0) * 12 + MONTHS.indexOf(m);
+}
+
+
+function renderRostersEdit(body) {
+  const { league } = CURRENT_LEAGUE;
+  const key = league.currentMonth;
+  const month = league.months?.[key];
+  if (!month) return;
+  let html = `<p class="page-subtitle">Editing ${key} rosters. ${SESSION ? (CURRENT_LEAGUE.isCommish ? 'As commissioner, you can edit every roster.' : 'You can edit your own roster.') : 'Sign in to edit.'}</p>`;
+  for (const mgr of league.managers) {
+    const editable = canEditMgrRoster(mgr);
+    html += `
+      <div class="panel">
+        <div class="panel-header">${escapeHtml(mgr)}${editable ? '' : ' <span class="team-chip">read only</span>'}</div>
+        <div class="panel-body" style="padding:0">
+          <table class="data-table">
+            <thead><tr><th style="width:36%">Player</th><th style="width:14%">Team</th><th style="width:20%">Pos</th><th class="right" style="width:18%">HR</th></tr></thead>
+            <tbody>
+              ${(month.rosters[mgr] || []).map((p, i) => `
+                <tr>
+                  <td><input class="slot-input" value="${escapeAttr(p.player || '')}" placeholder="Player name" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'player', this.value)"></td>
+                  <td><input class="slot-input" value="${escapeAttr(p.team || '')}" placeholder="Team" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'team', this.value)"></td>
+                  <td>
+                    <select class="slot-input" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'position', this.value)">
+                      <option value="">—</option>
+                      ${(league.positions || []).map(pos => `<option value="${escapeAttr(pos)}" ${p.position === pos ? 'selected' : ''}>${escapeHtml(pos)}</option>`).join('')}
+                    </select>
+                  </td>
+                  <td class="right"><input class="hr-input" type="number" min="0" value="${parseInt(p.hr) || 0}" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'hr', this.value)"></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+  body.innerHTML = html;
+}
+
+async function editSlot(manager, slotIndex, field, value) {
+  setSyncUI('loading', 'Saving…');
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({
+        action: 'save-state',
+        leagueId: CURRENT_LEAGUE.league.id,
+        edits: [{ manager, slotIndex, field, value }],
+        month: CURRENT_LEAGUE.league.currentMonth,
+      }),
+    });
+    const res = await r.json();
+    if (!res.ok) { setSyncUI('err', res.error || 'Save failed'); return; }
+    const ts = new Date();
+    setSyncUI('live', '✓ Saved · ' + ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+    await refreshLeague();
+  } catch (e) {
+    setSyncUI('err', 'Save failed');
+  }
+}
+
+async function refreshLeague() {
+  if (!CURRENT_LEAGUE) return;
+  try {
+    const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), { headers: authHeaders(), cache: 'no-store' });
+    const res = await r.json();
+    if (res.ok) {
+      CURRENT_LEAGUE = res;
+      if (CURRENT_LEAGUE.league.lastSync) setSyncUI('live', 'Synced', { serverTs: CURRENT_LEAGUE.league.lastSync });
+      renderActiveTab();
+    }
+  } catch {}
+}
+
+function renderHistory(body) {
+  const { league } = CURRENT_LEAGUE;
+  const log = [...(league.changeLog || [])].reverse();
+  if (!log.length) {
+    body.innerHTML = `<div class="empty-state"><div class="empty-state-title">No HR events yet</div><div class="empty-state-body">Once the sync detects a home run, you'll see it logged here.</div></div>`;
+    return;
+  }
+  body.innerHTML = `
+    <div class="panel">
+      <div class="panel-header">Change History · last ${log.length} events</div>
+      <div class="panel-body">
+        <div class="history-list">
+          ${log.map(e => {
+            const d = new Date(e.t);
+            return `<div class="history-row">
+              <span class="history-when">${d.toLocaleDateString([],{month:'short',day:'numeric'})} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+              <span style="flex:1;min-width:140px"><strong>${escapeHtml(e.player || '?')}</strong> · <span style="color:var(--text-muted)">${escapeHtml(e.mgr)}</span></span>
+              <span class="history-delta ${e.delta < 0 ? 'neg' : ''}">${e.delta > 0 ? '+' : ''}${e.delta} HR</span>
+              <span class="history-src">${e.src === 'sync' ? 'auto' : 'manual'}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function renderDraft(body) {
+  body.innerHTML = `<div class="empty-state"><div class="empty-state-title">Draft room</div><div class="empty-state-body">Full draft portal coming in the next release. For now you can edit rosters directly on the Rosters tab.</div></div>`;
+}
+
+function renderSettings(body) {
+  const { league, isCommish } = CURRENT_LEAGUE;
+  const inviteFull = `${location.origin}/join/${league.inviteToken}`;
+  const pending = (league.members || []).filter(m => m.status === 'pending');
+  const active  = (league.members || []).filter(m => m.status === 'active');
+  const s = league.settings || {};
+
+  let html = '';
+
+  if (isCommish) {
+    html += `
+      <div class="panel">
+        <div class="panel-header">Invite link</div>
+        <div class="panel-body">
+          <p class="input-help">Anyone with this link can request to join. You approve each request below.</p>
+          <div class="invite-box">
+            <div class="invite-url">${escapeHtml(inviteFull)}</div>
+            <button class="btn btn-sm" onclick="copyInvite('${escapeAttr(inviteFull)}')">📋 Copy link</button>
+            <button class="btn btn-sm" onclick="regenInvite()" style="margin-left:6px">Regenerate</button>
+          </div>
+        </div>
+      </div>
+    `;
+    if (pending.length) {
+      html += `
+        <div class="panel">
+          <div class="panel-header">Pending requests <span style="color:var(--accent)">${pending.length}</span></div>
+          <div class="panel-body">
+            ${pending.map(p => `
+              <div class="pending-row">
+                <div class="pending-info">
+                  <div class="pending-name">${escapeHtml(p.manager)}</div>
+                  <div class="pending-email">${escapeHtml(p.email || '')}</div>
+                </div>
+                <div class="pending-actions">
+                  <button class="btn btn-sm btn-primary" onclick="approveMember('${escapeAttr(p.email)}')">Approve</button>
+                  <button class="btn btn-sm btn-danger" onclick="declineMember('${escapeAttr(p.email)}')">Decline</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+    html += `
+      <div class="panel">
+        <div class="panel-header">League rules</div>
+        <div class="panel-body">
+          <div class="settings-row">
+            <div class="field">
+              <label>Roster size (players per manager)</label>
+              <input class="input compact" type="number" min="1" max="30" id="set-rosterSize" value="${s.rosterSize || 6}">
+            </div>
+            <div class="field">
+              <label>Redraft cadence</label>
+              <select class="select" id="set-redraftCadence">
+                <option value="monthly" ${s.redraftCadence === 'monthly' ? 'selected' : ''}>Monthly redraft</option>
+                <option value="weekly" ${s.redraftCadence === 'weekly' ? 'selected' : ''}>Weekly redraft</option>
+                <option value="season" ${s.redraftCadence === 'season' ? 'selected' : ''}>Full season (no redraft)</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="field">
+              <label>Position rule</label>
+              <select class="select" id="set-positionRule">
+                <option value="all-unique" ${s.positionRule === 'all-unique' ? 'selected' : ''}>All positions must be different</option>
+                <option value="one-duplicate-allowed" ${s.positionRule === 'one-duplicate-allowed' ? 'selected' : ''}>One duplicate position allowed</option>
+                <option value="unrestricted" ${s.positionRule === 'unrestricted' ? 'selected' : ''}>No restriction</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Team uniqueness</label>
+              <select class="select" id="set-teamRule">
+                <option value="all-unique" ${s.teamRule === 'all-unique' ? 'selected' : ''}>Every player league-wide from a different MLB team</option>
+                <option value="unrestricted" ${s.teamRule === 'unrestricted' ? 'selected' : ''}>Same MLB team can appear multiple times</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="field">
+              <label>Multi-player rule</label>
+              <select class="select" id="set-multiPlayerPerTeam">
+                <option value="false" ${!s.multiPlayerPerTeam ? 'selected' : ''}>One manager per MLB player (no doubles)</option>
+                <option value="true" ${s.multiPlayerPerTeam ? 'selected' : ''}>Same player can be on multiple rosters</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Scoring categories</label>
+              <select class="select" id="set-scoringCategories" multiple style="min-height:90px">
+                <option value="hr" ${(s.scoringCategories || []).includes('hr') ? 'selected' : ''}>HR (home runs)</option>
+                <option value="rbi" ${(s.scoringCategories || []).includes('rbi') ? 'selected' : ''}>RBI</option>
+                <option value="r" ${(s.scoringCategories || []).includes('r') ? 'selected' : ''}>R (runs)</option>
+                <option value="sb" ${(s.scoringCategories || []).includes('sb') ? 'selected' : ''}>SB (stolen bases)</option>
+                <option value="avg" ${(s.scoringCategories || []).includes('avg') ? 'selected' : ''}>AVG</option>
+              </select>
+              <div class="input-help">Cmd/Ctrl-click to select multiple. Currently the sync only tracks HR — others coming soon.</div>
+            </div>
+          </div>
+          <div class="error" id="settings-err"></div>
+          <button class="btn btn-primary" onclick="saveSettings()">Save rules</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">Rename league</div>
+        <div class="panel-body">
+          <div class="field">
+            <input class="input" id="rename-input" maxlength="60" value="${escapeAttr(league.name)}">
+          </div>
+          <button class="btn" onclick="renameLeague()">Save name</button>
+        </div>
+      </div>
+    `;
+  }
+
+  html += `
+    <div class="panel">
+      <div class="panel-header">Members</div>
+      <div class="panel-body">
+        ${active.map(m => `
+          <div class="pending-row">
+            <div class="pending-info">
+              <div class="pending-name">${escapeHtml(m.manager)} ${m.email && league.commissioner === m.email ? '<span class="league-card-status commish" style="margin-left:4px">Commissioner</span>' : ''}</div>
+              ${isCommish && m.email ? `<div class="pending-email">${escapeHtml(m.email)}</div>` : ''}
+            </div>
+            ${isCommish && league.commissioner !== m.email ? `<button class="btn btn-sm btn-danger" onclick="removeMember('${escapeAttr(m.manager)}')">Remove</button>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">Notifications (this device)</div>
+      <div class="panel-body">
+        <div id="notif-panel"><p class="input-help">Loading…</p></div>
+      </div>
+    </div>
+  `;
+
+  body.innerHTML = html;
+  renderNotificationsPanel();
+}
+
+async function approveMember(email) { await leagueAction('approve', { email }); await refreshLeague(); }
+async function declineMember(email) {
+  if (!confirm('Decline this join request?')) return;
+  await leagueAction('decline', { email }); await refreshLeague();
+}
+async function removeMember(manager) {
+  if (!confirm(`Remove ${manager}? Past rosters stay; they won't appear going forward.`)) return;
+  await leagueAction('remove', { manager }); await refreshLeague();
+}
+async function regenInvite() {
+  if (!confirm('Regenerate the invite link? The current link will stop working.')) return;
+  const res = await leagueAction('regenerate-invite', {});
+  if (res?.ok) await refreshLeague();
+}
+async function renameLeague() {
+  const name = document.getElementById('rename-input').value.trim();
+  if (!name) return;
+  const res = await leagueAction('rename', { name });
+  if (res?.ok) await refreshLeague();
+}
+async function saveSettings() {
+  const err = document.getElementById('settings-err');
+  err.textContent = '';
+  const settings = {
+    rosterSize: parseInt(document.getElementById('set-rosterSize').value) || 6,
+    redraftCadence: document.getElementById('set-redraftCadence').value,
+    positionRule: document.getElementById('set-positionRule').value,
+    teamRule: document.getElementById('set-teamRule').value,
+    multiPlayerPerTeam: document.getElementById('set-multiPlayerPerTeam').value === 'true',
+    scoringCategories: [...document.getElementById('set-scoringCategories').selectedOptions].map(o => o.value),
+  };
+  const res = await leagueAction('settings', { settings });
+  if (res?.ok) {
+    await refreshLeague();
+    err.style.color = 'var(--green)';
+    err.textContent = '✓ Saved';
+    setTimeout(() => { err.textContent = ''; err.style.color = ''; }, 2000);
+  } else {
+    err.textContent = res?.error || 'Failed to save';
+  }
+}
+
+async function leagueAction(action, payload) {
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({ action, leagueId: CURRENT_LEAGUE.league.id, ...payload }),
+    });
+    const res = await r.json();
+    if (!res.ok) alert(res.error || 'Action failed');
+    return res;
+  } catch (e) {
+    alert('Connection failed');
+    return null;
+  }
+}
+
+async function renderNotificationsPanel() {
+  const el = document.getElementById('notif-panel');
+  if (!el) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    el.innerHTML = '<p class="input-help">This browser doesn\'t support push notifications.</p>';
+    return;
+  }
+  if (!SESSION) {
+    el.innerHTML = '<p class="input-help">Sign in to enable notifications.</p>';
+    return;
+  }
+  let info;
+  try {
+    const r = await fetch(API_PUSH, { headers: authHeaders(), cache: 'no-store' });
+    info = await r.json();
+  } catch {
+    el.innerHTML = '<p class="input-help">Couldn\'t load notification status.</p>'; return;
+  }
+  if (!info.publicKey) {
+    el.innerHTML = '<p class="input-help" style="color:var(--red)">Push notifications not configured.</p>';
+    return;
+  }
+  const reg = await navigator.serviceWorker.getRegistration();
+  const localSub = reg ? await reg.pushManager.getSubscription() : null;
+  const subscribed = info.subscribed && !!localSub;
+
+  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  const iosHint = (iOS && !standalone)
+    ? '<div class="notice warn">📱 On iPhone, add this site to your Home Screen first, then open it from that icon and enable notifications.</div>'
+    : '';
+
+  el.innerHTML = `
+    ${iosHint}
+    <div style="margin-bottom:12px">
+      <span style="font-family:'Roboto Mono',monospace;font-size:11px;padding:3px 9px;border-radius:4px;background:${subscribed ? 'rgba(58,160,92,0.15);color:var(--green)' : 'rgba(240,199,94,0.15);color:var(--accent)'}">${subscribed ? '✓ NOTIFICATIONS ON' : 'OFF'}</span>
+      <button class="btn btn-sm" style="margin-left:8px" onclick="${subscribed ? 'disableNotifications()' : 'enableNotifications()'}">${subscribed ? 'Turn off' : 'Enable on this device'}</button>
+    </div>
+    ${subscribed ? `
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:rgba(0,0,0,0.25);border-radius:6px;cursor:pointer">
+        <input type="checkbox" id="notify-all" ${info.notifyAll ? 'checked' : ''} onchange="setNotifyAll(this.checked)" style="margin-top:3px;width:16px;height:16px;accent-color:var(--blue)">
+        <div>
+          <div style="font-weight:600;font-size:13px;color:var(--text)">Notify me on every league HR</div>
+          <div class="input-help">Your own players get a celebration; others get a quick factual update. Quiet hours 11 PM – 9 AM PT.</div>
+        </div>
+      </label>
+    ` : '<p class="input-help">Each device subscribes separately.</p>'}
+  `;
+}
+
+function urlBase64ToUint8Array(b64) {
+  const padding = '='.repeat((4 - b64.length % 4) % 4);
+  const base64 = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+async function enableNotifications() {
+  try {
+    const info = await (await fetch(API_PUSH, { headers: authHeaders() })).json();
+    if (!info.publicKey) return;
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { alert('Notifications were not allowed.'); return; }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(info.publicKey),
+    });
+    await fetch(API_PUSH, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({action:'subscribe', subscription: sub.toJSON()}),
+    });
+    renderNotificationsPanel();
+  } catch (e) { alert('Could not enable: ' + e.message); }
+}
+async function disableNotifications() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (sub) {
+      await sub.unsubscribe();
+      await fetch(API_PUSH, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', ...authHeaders()},
+        body: JSON.stringify({action:'unsubscribe', subscription: sub.toJSON()}),
+      });
+    }
+    renderNotificationsPanel();
+  } catch (e) { alert('Could not disable: ' + e.message); }
+}
+async function setNotifyAll(value) {
+  try {
+    await fetch(API_PUSH, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({action:'set-prefs', notifyAll: value}),
+    });
+  } catch { renderNotificationsPanel(); }
+}
+
+async function syncCurrentLeague() {
+  if (!CURRENT_LEAGUE) return;
+  setSyncUI('loading', 'Syncing…');
+  try {
+    const r = await fetch(API_SYNC + '?leagueId=' + encodeURIComponent(CURRENT_LEAGUE.league.id), {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    const res = await r.json();
+    if (!res.ok && res.error) { setSyncUI('err', res.error); return; }
+    await refreshLeague();
+    if (res.added > 0) setSyncUI('live', `+${res.added} new HR!`);
+  } catch (e) {
+    setSyncUI('err', 'Sync failed');
+  }
+}
+
+function render404() {
+  document.getElementById('view').innerHTML = `
+    <div class="auth-shell">
+      <div class="auth-panel">
+        <div class="auth-title">Not found</div>
+        <p class="auth-sub">That page doesn't exist.</p>
+        <button class="btn btn-primary" style="width:100%" onclick="navigate('/')">Go home</button>
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s) { return escapeHtml(s); }
+function normName(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim(); }
+function ordinal(n) { const s = ['th','st','nd','rd']; const v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+
+(async function init() {
+  renderAccountChip();
+  if (SESSION) {
+    try {
+      const r = await fetch(API_AUTH, { headers: authHeaders(), cache: 'no-store' });
+      const info = await r.json();
+      if (!info.me) setSession(null);
+      else if (info.me.isAdmin !== SESSION.isAdmin) setSession({ ...SESSION, isAdmin: info.me.isAdmin });
+    } catch {}
+  }
+  await renderRoute();
+})();
+</script>
+</body>
+</html>

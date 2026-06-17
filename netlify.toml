@@ -1,0 +1,8 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Note: we use external cron (cron-job.org) hitting /run-sync?leagueId=...
+# to drive syncs every minute. Netlify free tier scheduled functions only
+# support hourly intervals, so they're disabled here in favor of the external job.
+# The scheduled-sync function is still deployed as a manual fallback.

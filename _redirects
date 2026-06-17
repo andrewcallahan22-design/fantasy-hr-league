@@ -1,0 +1,5 @@
+# SPA routing — serve index.html for any non-function URL so /league/abc,
+# /join/xyz, /new etc. all reach the SPA router. The first rule preserves
+# function calls untouched.
+/.netlify/functions/*  /.netlify/functions/:splat  200
+/*                     /index.html                  200
