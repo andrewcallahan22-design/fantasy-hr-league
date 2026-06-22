@@ -1,91 +1,155 @@
-// Notification dispatcher.
-// Push subscriptions are keyed by user email (not manager name) so they
-// follow the user across leagues. Preferences are also per-user.
+// Notification dispatcher — multi-tenant, per-user subscriptions.
 //
-// Rules:
-//   • The owner of a homering player ALWAYS gets a celebratory push
-//   • Other league members with notifyAll=true get a calm factual push
-//   • League leader changes notify all league members
-//   • Quiet hours 11 PM – 9 AM Pacific
+// DEDUP STRATEGY (3 layers):
+//   1. Stable tags: tag = `hr-{leagueId}-{playerNormalized}-{totalSeasonHR}`
+//      so the browser/OS deduplicates — same HR can only show once per device.
+//   2. In-call dedup: track (email, tag) pairs so one sync can't send two
+//      pushes to the same person for the same event.
+//   3. Tie suppression: leader-change notifications only fire when one manager
+//      definitively EXCEEDS the previous leader — not on ties.
+//
+// NOTIFICATION RULES:
+//   • Owner of homering player: celebratory push (always, if subscribed)
+//   • Other members with notifyAll=true: calm factual push
+//   • Lead CHANGE (not tie): notify all members — distinct message per person
+//   • Quiet hours 11 PM – 9 AM Pacific: suppress all
 import { getStore } from '@netlify/blobs';
 import { sendPush } from './webpush.mjs';
 
+export function normName(n) {
+  return (n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 function inQuietHours(now = new Date()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false
+    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
   });
   const hour = parseInt(fmt.format(now));
   return hour >= 23 || hour < 9;
 }
 
-async function loadSubs() { return (await getStore('league').get('pushSubs', { type: 'json' })) || {}; }
+async function loadSubs()  { return (await getStore('league').get('pushSubs',  { type: 'json' })) || {}; }
 async function saveSubs(s) { await getStore('league').setJSON('pushSubs', s); }
 async function loadPrefs() { return (await getStore('league').get('pushPrefs', { type: 'json' })) || {}; }
 
-// Find the email of the user managing this team in this league.
 function emailForManager(league, mgr) {
   const m = (league.members || []).find(x => x.manager === mgr && x.status === 'active');
   return m?.email?.toLowerCase() || null;
 }
 
+// Stable tag for an HR event — does NOT include timestamp so browser/OS can
+// deduplicate: if the same notification arrives twice it replaces the first
+// rather than stacking.
+// Format: hr-{leagueId}-{playerNorm}-{newSeasonTotal}
+// The newSeasonTotal is the season HR count AFTER the delta. We derive it
+// from ev.baselineAfter passed in by core.mjs, or fall back to a rough
+// minute-bucket to limit the window.
+function hrTag(leagueId, ev) {
+  const norm = normName(ev.player).replace(/\s+/g, '_');
+  const bucket = ev.baselineAfter !== undefined
+    ? String(ev.baselineAfter)
+    : String(Math.floor(Date.now() / 60000)); // 1-minute bucket fallback
+  return `hr-${leagueId}-${norm}-${bucket}`;
+}
+
+function leaderTag(leagueId, leaderName, leaderHR) {
+  return `leader-${leagueId}-${normName(leaderName).replace(/\s+/g, '_')}-${leaderHR}`;
+}
+
 export async function dispatchNotifications({ league, hrEvents, leaderBefore, leaderAfter }) {
   if (inQuietHours()) {
-    console.log('Quiet hours — suppressing notifications');
+    console.log(`[notify:${league.id}] Quiet hours — suppressed`);
     return { sent: 0, suppressed: true };
   }
 
-  const allSubs = await loadSubs();
+  const allSubs  = await loadSubs();
   const allPrefs = await loadPrefs();
 
-  const queue = [];   // { email, payload }
+  // (email, tag) pairs already enqueued this call — prevents double-sending
+  // within a single sync run (e.g. if the same player is on two roster slots).
+  const seen = new Set();
+  const queue = []; // { email, payload, tag }
 
+  const enqueue = (email, payload, tag) => {
+    const key = `${email}||${tag}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    queue.push({ email, payload, tag });
+  };
+
+  // ── HR events ──
   for (const ev of hrEvents) {
+    const tag = hrTag(league.id, ev);
     const ownerEmail = emailForManager(league, ev.mgr);
+
+    // Owner gets celebratory push
     if (ownerEmail) {
-      queue.push({
-        email: ownerEmail,
-        payload: JSON.stringify({
-          title: `🚀 BOOM! ${ev.player} just went yard!`,
-          body: `+${ev.delta} HR for YOUR team in ${league.name}`,
-          tag: `hr-own-${league.id}-${ev.player}-${Date.now()}`,
-          url: `/league/${league.id}`,
-        }),
-      });
+      enqueue(ownerEmail, JSON.stringify({
+        title: `🚀 BOOM! ${ev.player} just went yard!`,
+        body: `+${ev.delta} HR for YOUR team · ${league.name}`,
+        tag,
+        url: `/league/${league.id}`,
+      }), tag);
     }
+
+    // Others with notifyAll get factual push (different tag prefix so it
+    // doesn't stomp the owner's celebration push on shared devices)
     for (const member of (league.members || [])) {
       if (member.status !== 'active' || !member.email) continue;
-      if (member.email.toLowerCase() === ownerEmail) continue;
-      if (!allPrefs[member.email.toLowerCase()]?.notifyAll) continue;
-      queue.push({
-        email: member.email.toLowerCase(),
-        payload: JSON.stringify({
-          title: `⚾ ${ev.player} homered`,
-          body: `+${ev.delta} for ${ev.mgr}'s roster · ${league.name}`,
-          tag: `hr-other-${league.id}-${ev.player}-${Date.now()}`,
-          url: `/league/${league.id}`,
-        }),
-      });
+      const email = member.email.toLowerCase();
+      if (email === ownerEmail) continue;
+      if (!allPrefs[email]?.notifyAll) continue;
+      enqueue(email, JSON.stringify({
+        title: `⚾ ${ev.player} homered`,
+        body: `+${ev.delta} for ${ev.mgr}'s roster · ${league.name}`,
+        tag: `other-${tag}`,
+        url: `/league/${league.id}`,
+      }), `other-${tag}`);
     }
   }
 
-  if (leaderAfter && leaderBefore && leaderAfter.name !== leaderBefore.name) {
-    for (const member of (league.members || [])) {
-      if (member.status !== 'active' || !member.email) continue;
-      const isYou = (member.manager === leaderAfter.name);
-      queue.push({
-        email: member.email.toLowerCase(),
-        payload: JSON.stringify({
-          title: isYou ? '🏆 You\'ve taken the league lead!' : `🏆 ${leaderAfter.name} took the league lead`,
-          body: `${leaderAfter.name} now has ${leaderAfter.hr} HR this month · ${league.name}`,
-          tag: `leader-${league.id}-${leaderAfter.name}-${Date.now()}`,
+  // ── Leader change — ONLY when one manager definitively exceeds the other ──
+  // Suppressed when:
+  //   • No leader before (first sync of month)
+  //   • Same leader as before (no change)
+  //   • The new "leader" is tied with someone else (tie is NOT a lead change)
+  if (leaderAfter && leaderBefore) {
+    const genuineLeadChange =
+      leaderAfter.names.length === 1 &&           // exactly one leader (no tie)
+      leaderBefore.names.length === 1 &&          // was exactly one leader before
+      leaderAfter.names[0] !== leaderBefore.names[0] && // it's a different person
+      leaderAfter.hr > leaderBefore.hr;           // they actually have more HR
+
+    const brokeATie =
+      leaderAfter.names.length === 1 &&           // exactly one leader now
+      leaderBefore.names.length > 1 &&            // it was a tie before
+      leaderAfter.hr >= leaderBefore.hr;          // same or better HR total
+
+    if (genuineLeadChange || brokeATie) {
+      const newLeader = leaderAfter.names[0];
+      const tag = leaderTag(league.id, newLeader, leaderAfter.hr);
+      const verb = brokeATie ? 'broke the tie' : 'took the league lead';
+      for (const member of (league.members || [])) {
+        if (member.status !== 'active' || !member.email) continue;
+        const email = member.email.toLowerCase();
+        const isYou = member.manager === newLeader;
+        enqueue(email, JSON.stringify({
+          title: isYou
+            ? `🏆 You ${verb}!`
+            : `🏆 ${newLeader} ${verb}`,
+          body: `${newLeader} now leads with ${leaderAfter.hr} HR this month · ${league.name}`,
+          tag,
           url: `/league/${league.id}`,
-        }),
-      });
+        }), tag);
+      }
     }
   }
 
+  // ── Fire the queue ──
   let sent = 0;
   const deadEndpoints = new Set();
+
   await Promise.all(queue.map(async ({ email, payload }) => {
     const subs = allSubs[email] || [];
     for (const sub of subs) {
@@ -94,11 +158,12 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
         if (res.ok) sent++;
         else if (res.status === 404 || res.status === 410) deadEndpoints.add(sub.endpoint);
       } catch (e) {
-        console.warn('Push failed:', e.message);
+        console.warn(`[notify:${league.id}] Push failed:`, e.message);
       }
     }
   }));
 
+  // Prune dead endpoints
   if (deadEndpoints.size) {
     for (const e of Object.keys(allSubs)) {
       allSubs[e] = (allSubs[e] || []).filter(s => !deadEndpoints.has(s.endpoint));
@@ -106,7 +171,7 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
     await saveSubs(allSubs);
   }
 
-  const totalAttempts = queue.reduce((n, q) => n + (allSubs[q.email] || []).length, 0);
-  console.log(`Notifications [${league.id}]: ${sent}/${totalAttempts} delivered, ${deadEndpoints.size} dead subs pruned`);
+  const totalAttempts = queue.reduce((n, { email }) => n + (allSubs[email] || []).length, 0);
+  console.log(`[notify:${league.id}] ${sent}/${totalAttempts} delivered, ${deadEndpoints.size} dead subs pruned, ${queue.length} distinct events queued`);
   return { sent, dead: deadEndpoints.size };
 }
