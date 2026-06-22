@@ -1309,9 +1309,16 @@ function nextGameBadge(ng) {
 
   const label = ng.label || '\u2014';
 
+  // Detect stale pre-formatted strings from old syncs (e.g. "7:10 PM UTC").
+  // These were stored before we switched to raw ISO timestamps. Show a nudge
+  // instead of the wrong timezone.
+  if (/UTC|GMT/.test(label) && !/T\d{2}:\d{2}/.test(label)) {
+    return '<span style="font-size:10px;color:var(--text-faint);font-style:italic">sync to refresh</span>';
+  }
+
   // If the backend stored a UTC ISO timestamp, reformat it in the viewer's
   // local timezone. Intl.DateTimeFormat picks up the browser's system timezone
-  // automatically — each manager sees their own local time.
+  // automatically — each manager sees their own local time (PST, EST, etc.).
   if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(label)) {
     try {
       const d = new Date(label);

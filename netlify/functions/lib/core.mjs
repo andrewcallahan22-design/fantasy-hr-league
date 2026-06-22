@@ -192,7 +192,9 @@ export async function runSyncForLeague(leagueId) {
     league.streaks[nk]     = r.last7;
     league.last24h[nk]     = r.last24h;
     league.seasonHints[nk] = r.seasonHR;
-    if (r.nextGame !== null) league.nextGame[nk] = r.nextGame;
+    // Always write nextGame — even null — so stale pre-formatted strings
+    // from older syncs get evicted and replaced with fresh ISO-timestamp data.
+    league.nextGame[nk] = r.nextGame;
 
     const baseline = league.seasonBaseline[nk];
     if (baseline === undefined) {
