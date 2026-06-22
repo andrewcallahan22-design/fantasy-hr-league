@@ -1826,11 +1826,42 @@ function renderSettings(body) {
           <div class="pending-row">
             <div class="pending-info">
               <div class="pending-name">${escapeHtml(m.manager)} ${m.email && league.commissioner === m.email ? '<span class="league-card-status commish" style="margin-left:4px">Commissioner</span>' : ''}</div>
-              ${isCommish && m.email ? `<div class="pending-email">${escapeHtml(m.email)}</div>` : ''}
+              ${isCommish ? `<div class="pending-email" style="display:flex;align-items:center;gap:8px">
+                ${m.email
+                  ? `<span style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-muted)">${escapeHtml(m.email)}</span>`
+                  : `<span style="font-size:11px;color:var(--orange);font-style:italic">⚠ No account linked</span>`}
+              </div>` : ''}
             </div>
-            ${isCommish && league.commissioner !== m.email ? `<button class="btn btn-sm btn-danger" onclick="removeMember('${escapeAttr(m.manager)}')">Remove</button>` : ''}
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${isCommish && !m.email ? `<button class="btn btn-sm" onclick="openLinkMember('${escapeAttr(m.manager)}')">Link account</button>` : ''}
+              ${isCommish && league.commissioner !== m.email ? `<button class="btn btn-sm btn-danger" onclick="removeMember('${escapeAttr(m.manager)}')">Remove</button>` : ''}
+            </div>
           </div>
         `).join('')}
+        ${isCommish ? `
+          <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--panel-border)">
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+              Link a member's email to their manager slot. They'll see the league as soon as they sign up (or immediately if they already have an account).
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+              <div class="field" style="margin:0;flex:1;min-width:120px">
+                <label>Manager name</label>
+                <select class="select" id="link-manager-select" style="padding:7px 10px;font-size:13px">
+                  <option value="">— pick manager —</option>
+                  ${active.filter(m => !m.email && league.commissioner !== m.email).map(m =>
+                    `<option value="${escapeAttr(m.manager)}">${escapeHtml(m.manager)}</option>`
+                  ).join('')}
+                </select>
+              </div>
+              <div class="field" style="margin:0;flex:2;min-width:180px">
+                <label>Their email address</label>
+                <input class="input compact" id="link-member-email" type="email" placeholder="friend@email.com" autocapitalize="off" autocorrect="off">
+              </div>
+              <button class="btn btn-primary btn-sm" style="white-space:nowrap;padding:8px 14px" onclick="submitLinkMember()">Link account</button>
+            </div>
+            <div class="error" id="link-member-err" style="margin-top:6px"></div>
+          </div>
+        ` : ''}
       </div>
     </div>
     <div class="panel">
@@ -1843,6 +1874,31 @@ function renderSettings(body) {
 
   body.innerHTML = html;
   renderNotificationsPanel();
+}
+
+async function openLinkMember(manager) {
+  // Pre-fill the select when clicking the "Link account" button on a specific row
+  const sel = document.getElementById('link-manager-select');
+  if (sel) sel.value = manager;
+  document.getElementById('link-member-email')?.focus();
+}
+
+async function submitLinkMember() {
+  const err     = document.getElementById('link-member-err');
+  err.textContent = '';
+  const manager = document.getElementById('link-manager-select').value.trim();
+  const email   = document.getElementById('link-member-email').value.trim().toLowerCase();
+  if (!manager) { err.textContent = 'Pick a manager from the list'; return; }
+  if (!email.includes('@')) { err.textContent = 'Valid email required'; return; }
+  const res = await leagueAction('link-member', { manager, email });
+  if (res?.ok) {
+    err.style.color = 'var(--green)';
+    err.textContent = `✓ ${manager} is now linked to ${email}`;
+    await refreshLeague();
+    setTimeout(() => { if (err) { err.textContent = ''; err.style.color = ''; } }, 3000);
+  } else {
+    err.textContent = res?.error || 'Failed to link';
+  }
 }
 
 async function approveMember(email) { await leagueAction('approve', { email }); await refreshLeague(); }

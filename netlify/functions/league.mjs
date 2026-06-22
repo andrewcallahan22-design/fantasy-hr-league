@@ -266,6 +266,53 @@ export default async (req) => {
     return Response.json({ ok: true, manager: targetManager }, { headers: NO_CACHE });
   }
 
+  // ── LINK-MEMBER — commissioner pre-links an email to a manager slot ──
+  // Lets the commissioner type in a member's email + their manager name to
+  // pre-connect them BEFORE they sign up. When that person creates an account
+  // with that email, they'll automatically see the league in My Leagues with
+  // their full roster history intact (April/May/June data preserved).
+  //
+  // Also works AFTER signup — if Max already created an account but sees
+  // "You're not in any leagues yet", the commissioner can link him here
+  // and Max sees the league on his next page load.
+  if (body.action === 'link-member') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can link members' }, { status: 403 });
+    }
+    const targetManager = String(body.manager || '').trim();
+    const targetEmail   = String(body.email   || '').toLowerCase().trim();
+    if (!targetManager) return Response.json({ ok: false, error: 'Manager name required' }, { status: 400 });
+    if (!targetEmail.includes('@')) return Response.json({ ok: false, error: 'Valid email required' }, { status: 400 });
+
+    // Can't link an email that already owns a different slot in this league
+    const existingSlot = (league.members || []).find(
+      m => m.email?.toLowerCase() === targetEmail && m.manager !== targetManager
+    );
+    if (existingSlot) {
+      return Response.json({
+        ok: false,
+        error: `${targetEmail} is already linked to "${existingSlot.manager}" in this league`,
+      }, { status: 400 });
+    }
+
+    // Find or create the manager slot
+    let slot = (league.members || []).find(m => m.manager === targetManager);
+    if (!slot && (league.managers || []).includes(targetManager)) {
+      slot = { manager: targetManager, email: null, status: 'active', joinedAt: Date.now() };
+      league.members = [...(league.members || []), slot];
+    }
+    if (!slot) {
+      return Response.json({ ok: false, error: `No manager named "${targetManager}" in this league` }, { status: 404 });
+    }
+
+    slot.email  = targetEmail;
+    slot.status = 'active';
+    if (!slot.joinedAt) slot.joinedAt = Date.now();
+
+    await saveLeague(league);
+    return Response.json({ ok: true, manager: targetManager, email: targetEmail }, { headers: NO_CACHE });
+  }
+
   // ── REMOVE an active member ──
   if (body.action === 'remove') {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {
