@@ -1174,15 +1174,34 @@ function startLeaguePolling() {
     if (!CURRENT_LEAGUE || document.hidden) return;
     const el = document.activeElement;
     if (el && el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'number')) return;
-    try {
-      const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), { headers: authHeaders(), cache: 'no-store' });
-      const res = await r.json();
-      if (!res.ok) return;
-      CURRENT_LEAGUE = res;
-      if (CURRENT_LEAGUE.league.lastSync) setSyncUI('live', 'Synced', { serverTs: CURRENT_LEAGUE.league.lastSync });
-      renderLeagueShell();
-    } catch {}
+    await _fetchAndRenderLeague();
   }, 15000);
+
+  // On mobile, iOS suspends JS timers when the screen locks or you switch apps.
+  // When the user comes back, the 15-second interval won't fire until the next
+  // tick — which could be 15 seconds away. Instead, re-fetch immediately the
+  // moment the page becomes visible again. This makes the Next Game column
+  // and HR counts feel instant on return rather than stale.
+  if (!window._visibilityListenerAttached) {
+    window._visibilityListenerAttached = true;
+    document.addEventListener('visibilitychange', async () => {
+      if (document.hidden || !CURRENT_LEAGUE) return;
+      // Small delay to let iOS finish waking before firing network request
+      setTimeout(() => _fetchAndRenderLeague(), 300);
+    });
+  }
+}
+
+async function _fetchAndRenderLeague() {
+  if (!CURRENT_LEAGUE) return;
+  try {
+    const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), { headers: authHeaders(), cache: 'no-store' });
+    const res = await r.json();
+    if (!res.ok) return;
+    CURRENT_LEAGUE = res;
+    if (CURRENT_LEAGUE.league.lastSync) setSyncUI('live', 'Synced', { serverTs: CURRENT_LEAGUE.league.lastSync });
+    renderLeagueShell();
+  } catch {}
 }
 
 function renderLeagueShell() {
@@ -1903,6 +1922,15 @@ async function renderNotificationsPanelInto(elementId) {
       <p class="input-help">Each device subscribes separately. Enable on your phone AND your laptop if you want both.</p>
     `}
   `;
+}
+
+// Converts a URL-safe base64 VAPID public key to a Uint8Array for the
+// PushManager.subscribe() call. Required by the Web Push API.
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
 async function enableNotificationsFor(elementId) {
