@@ -880,7 +880,7 @@ async function renderRoute() {
   }
   const joinMatch = path.match(/^\/join\/([^/]+)\/?$/);
   if (joinMatch) return renderJoinPage(joinMatch[1]);
-  const leagueMatch = path.match(/^\/league\/([^/]+)(?:\/(draft|history|settings|edit|standings))?\/?$/);
+  const leagueMatch = path.match(/^\/league\/([^/]+)(?:\/(draft|history|settings|edit|standings|my-settings))?\/?$/);
   if (leagueMatch) return renderLeague(leagueMatch[1], leagueMatch[2] || 'scoreboard');
   return render404();
 }
@@ -1189,12 +1189,15 @@ function renderLeagueShell() {
   const { league, myManager, isCommish, isPending } = CURRENT_LEAGUE;
   const v = document.getElementById('view');
   const tabs = [
-    { id: 'scoreboard', label: 'Scoreboard' },
-    { id: 'standings',  label: 'Standings' },
-    { id: 'edit',       label: 'Rosters' },
-    { id: 'history',    label: 'History' },
-    { id: 'draft',      label: 'Draft' },
-    { id: 'settings',   label: isCommish ? 'Commissioner' : 'Settings' },
+    { id: 'scoreboard',  label: 'Scoreboard' },
+    { id: 'standings',   label: 'Standings' },
+    { id: 'edit',        label: 'Rosters' },
+    { id: 'history',     label: 'History' },
+    { id: 'draft',       label: 'Draft' },
+    // My Settings is visible to every signed-in member
+    ...(SESSION ? [{ id: 'my-settings', label: '⚙ Settings' }] : []),
+    // Commissioner tab only visible to the commissioner
+    ...(isCommish ? [{ id: 'settings', label: '🛠 Commissioner' }] : []),
   ];
 
   let pendingBanner = '';
@@ -1269,12 +1272,13 @@ async function copyInvite(url) {
 function renderActiveTab() {
   const body = document.getElementById('tab-body');
   if (!body) return;
-  if (CURRENT_TAB === 'scoreboard') return renderScoreboard(body);
-  if (CURRENT_TAB === 'standings')  return renderStandings(body);
-  if (CURRENT_TAB === 'edit')       return renderRostersEdit(body);
-  if (CURRENT_TAB === 'history')    return renderHistory(body);
-  if (CURRENT_TAB === 'draft')      return renderDraft(body);
-  if (CURRENT_TAB === 'settings')   return renderSettings(body);
+  if (CURRENT_TAB === 'scoreboard')  return renderScoreboard(body);
+  if (CURRENT_TAB === 'standings')   return renderStandings(body);
+  if (CURRENT_TAB === 'edit')        return renderRostersEdit(body);
+  if (CURRENT_TAB === 'history')     return renderHistory(body);
+  if (CURRENT_TAB === 'draft')       return renderDraft(body);
+  if (CURRENT_TAB === 'my-settings') return renderMySettings(body);
+  if (CURRENT_TAB === 'settings')    return renderSettings(body);
 }
 
 function canEditMgrRoster(mgr) {
@@ -1703,6 +1707,245 @@ async function renderDraft(body) {
   body.innerHTML = `<div class="empty-state"><div class="empty-state-title">Draft room</div><div class="empty-state-body">Full draft portal coming in the next release. For now you can edit rosters directly on the Rosters tab.</div></div>`;
 }
 
+// ── MY SETTINGS TAB ──
+// Visible to every signed-in member. Contains:
+//   • Push notifications (enable/disable for this device, notifyAll toggle)
+//   • Account info (email, display name)
+// Notifications were previously buried in the Commissioner tab — now every
+// member can find and manage them here.
+function renderMySettings(body) {
+  const { league, myManager } = CURRENT_LEAGUE;
+  if (!SESSION) {
+    body.innerHTML = `<div class="notice info">Sign in to manage your settings.</div>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <div style="max-width:600px">
+      <div class="panel">
+        <div class="panel-header">Push Notifications</div>
+        <div class="panel-body">
+          <p class="input-help" style="margin-bottom:14px">
+            Get notified the moment one of your players homers. Enable notifications on each device you want to receive them.
+          </p>
+          <div id="notif-panel-settings"><p class="input-help">Loading…</p></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Your Account</div>
+        <div class="panel-body">
+          <div class="field">
+            <label>Email</label>
+            <div style="font-family:'Roboto Mono',monospace;font-size:13px;color:var(--text-dim);padding:9px 0">${escapeHtml(SESSION.email)}</div>
+          </div>
+          <div class="field">
+            <label>Display name</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="input compact" id="display-name-input" value="${escapeAttr(SESSION.displayName || '')}" maxlength="40" style="max-width:240px">
+              <button class="btn btn-sm" onclick="saveDisplayName()">Save</button>
+            </div>
+            <div class="error" id="display-name-err" style="margin-top:4px"></div>
+          </div>
+          ${myManager ? `
+          <div class="field">
+            <label>Manager name in this league</label>
+            <div style="font-size:14px;color:var(--text-dim);padding:4px 0">${escapeHtml(myManager)} <span class="team-chip" style="margin-left:4px">${escapeHtml(league.name)}</span></div>
+            <div class="input-help">Manager names are set per league. Ask the commissioner to update it if needed.</div>
+          </div>
+          ` : ''}
+          <div class="field" style="margin-top:8px">
+            <label>Password</label>
+            <button class="btn btn-sm btn-ghost" onclick="openChangePassword()">Change password</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Render the notification panel into the settings tab
+  renderNotificationsPanelInto('notif-panel-settings');
+}
+
+async function saveDisplayName() {
+  const err = document.getElementById('display-name-err');
+  err.textContent = '';
+  const name = document.getElementById('display-name-input').value.trim();
+  if (!name) { err.textContent = 'Name cannot be empty'; return; }
+  try {
+    const r = await fetch(API_AUTH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'update-display-name', displayName: name }),
+    });
+    const res = await r.json();
+    if (!res.ok) { err.textContent = res.error || 'Failed to save'; return; }
+    setSession({ ...SESSION, displayName: name });
+    err.style.color = 'var(--green)';
+    err.textContent = '✓ Saved';
+    setTimeout(() => { err.textContent = ''; err.style.color = ''; }, 2000);
+  } catch (e) {
+    err.textContent = 'Connection failed';
+  }
+}
+
+function openChangePassword() {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay open';
+  wrap.id = 'change-pw-modal';
+  wrap.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-head-title">Change password</span>
+        <button class="modal-close" onclick="document.getElementById('change-pw-modal').remove()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="error" id="change-pw-err"></div>
+        <div class="field">
+          <label>Current password</label>
+          <input class="input" type="password" id="change-pw-current" autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label>New password</label>
+          <input class="input" type="password" id="change-pw-new" autocomplete="new-password">
+          <div class="input-help">At least 6 characters.</div>
+        </div>
+        <div class="field">
+          <label>Confirm new password</label>
+          <input class="input" type="password" id="change-pw-confirm" autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary" style="width:100%" onclick="submitChangePassword()">Update password</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  setTimeout(() => document.getElementById('change-pw-current')?.focus(), 100);
+}
+
+async function submitChangePassword() {
+  const err = document.getElementById('change-pw-err');
+  err.textContent = '';
+  const current = document.getElementById('change-pw-current').value;
+  const newPw   = document.getElementById('change-pw-new').value;
+  const confirm = document.getElementById('change-pw-confirm').value;
+  if (!current)        { err.textContent = 'Current password required'; return; }
+  if (newPw.length < 6){ err.textContent = 'New password must be at least 6 characters'; return; }
+  if (newPw !== confirm){ err.textContent = 'Passwords don\'t match'; return; }
+  try {
+    const r = await fetch(API_AUTH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'change-password', currentPassword: current, newPassword: newPw }),
+    });
+    const res = await r.json();
+    if (!res.ok) { err.textContent = res.error || 'Failed to update'; return; }
+    document.getElementById('change-pw-modal').remove();
+    alert('Password updated successfully.');
+  } catch (e) {
+    err.textContent = 'Connection failed';
+  }
+}
+
+// Renders the notifications panel into any element by ID.
+// Used by both the My Settings tab and the Commissioner tab.
+async function renderNotificationsPanelInto(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    el.innerHTML = '<p class="input-help">This browser doesn\'t support push notifications.</p>';
+    return;
+  }
+  if (!SESSION) {
+    el.innerHTML = '<p class="input-help">Sign in to enable notifications.</p>';
+    return;
+  }
+  let info;
+  try {
+    const r = await fetch(API_PUSH, { headers: authHeaders(), cache: 'no-store' });
+    info = await r.json();
+  } catch {
+    el.innerHTML = '<p class="input-help">Couldn\'t load notification status.</p>';
+    return;
+  }
+  if (!info.publicKey) {
+    el.innerHTML = '<p class="input-help" style="color:var(--red)">Push notifications not configured on this server.</p>';
+    return;
+  }
+  const reg = await navigator.serviceWorker.getRegistration();
+  const localSub = reg ? await reg.pushManager.getSubscription() : null;
+  const subscribed = info.subscribed && !!localSub;
+
+  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  const iosHint = (iOS && !standalone)
+    ? '<div class="notice warn" style="margin-bottom:12px">📱 On iPhone, add this site to your Home Screen first, then open from that icon and enable notifications here.</div>'
+    : '';
+
+  el.innerHTML = `
+    ${iosHint}
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+      <span style="font-family:'Roboto Mono',monospace;font-size:11px;padding:4px 10px;border-radius:4px;background:${subscribed ? 'rgba(58,160,92,0.15)' : 'rgba(148,163,184,0.12)'};color:${subscribed ? 'var(--green)' : 'var(--text-muted)'}">
+        ${subscribed ? '✓ NOTIFICATIONS ON' : 'OFF'}
+      </span>
+      <button class="btn btn-sm" onclick="${subscribed ? `disableNotificationsFor('${elementId}')` : `enableNotificationsFor('${elementId}')`}">
+        ${subscribed ? 'Turn off on this device' : 'Enable on this device'}
+      </button>
+    </div>
+    ${subscribed ? `
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:rgba(0,0,0,0.25);border-radius:6px;cursor:pointer">
+        <input type="checkbox" id="notify-all-${elementId}" ${info.notifyAll ? 'checked' : ''} onchange="setNotifyAll(this.checked)" style="margin-top:3px;width:16px;height:16px;accent-color:var(--blue)">
+        <div>
+          <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:3px">Notify me on every league HR</div>
+          <div class="input-help">Your own players get a celebration 🚀. Others get a quick factual update. Quiet hours 11 PM – 9 AM PT apply to all notifications.</div>
+        </div>
+      </label>
+    ` : `
+      <p class="input-help">Each device subscribes separately. Enable on your phone AND your laptop if you want both.</p>
+    `}
+  `;
+}
+
+async function enableNotificationsFor(elementId) {
+  try {
+    const info = await (await fetch(API_PUSH, { headers: authHeaders() })).json();
+    if (!info.publicKey) return;
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { alert('Notifications were not allowed. Check your browser settings.'); return; }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(info.publicKey),
+    });
+    await fetch(API_PUSH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'subscribe', subscription: sub.toJSON() }),
+    });
+    renderNotificationsPanelInto(elementId);
+  } catch (e) {
+    alert('Could not enable notifications: ' + e.message);
+  }
+}
+
+async function disableNotificationsFor(elementId) {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (sub) {
+      await sub.unsubscribe();
+      await fetch(API_PUSH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ action: 'unsubscribe', subscription: sub.toJSON() }),
+      });
+    }
+    renderNotificationsPanelInto(elementId);
+  } catch (e) {
+    alert('Could not disable notifications: ' + e.message);
+  }
+}
+
 function renderSettings(body) {
   const { league, isCommish } = CURRENT_LEAGUE;
   const inviteFull = `${location.origin}/join/${league.inviteToken}`;
@@ -1873,7 +2116,7 @@ function renderSettings(body) {
   `;
 
   body.innerHTML = html;
-  renderNotificationsPanel();
+  renderNotificationsPanelInto('notif-panel');
 }
 
 async function openLinkMember(manager) {
@@ -1959,97 +2202,6 @@ async function leagueAction(action, payload) {
   }
 }
 
-async function renderNotificationsPanel() {
-  const el = document.getElementById('notif-panel');
-  if (!el) return;
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    el.innerHTML = '<p class="input-help">This browser doesn\'t support push notifications.</p>';
-    return;
-  }
-  if (!SESSION) {
-    el.innerHTML = '<p class="input-help">Sign in to enable notifications.</p>';
-    return;
-  }
-  let info;
-  try {
-    const r = await fetch(API_PUSH, { headers: authHeaders(), cache: 'no-store' });
-    info = await r.json();
-  } catch {
-    el.innerHTML = '<p class="input-help">Couldn\'t load notification status.</p>'; return;
-  }
-  if (!info.publicKey) {
-    el.innerHTML = '<p class="input-help" style="color:var(--red)">Push notifications not configured.</p>';
-    return;
-  }
-  const reg = await navigator.serviceWorker.getRegistration();
-  const localSub = reg ? await reg.pushManager.getSubscription() : null;
-  const subscribed = info.subscribed && !!localSub;
-
-  const iOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-  const iosHint = (iOS && !standalone)
-    ? '<div class="notice warn">📱 On iPhone, add this site to your Home Screen first, then open it from that icon and enable notifications.</div>'
-    : '';
-
-  el.innerHTML = `
-    ${iosHint}
-    <div style="margin-bottom:12px">
-      <span style="font-family:'Roboto Mono',monospace;font-size:11px;padding:3px 9px;border-radius:4px;background:${subscribed ? 'rgba(58,160,92,0.15);color:var(--green)' : 'rgba(240,199,94,0.15);color:var(--accent)'}">${subscribed ? '✓ NOTIFICATIONS ON' : 'OFF'}</span>
-      <button class="btn btn-sm" style="margin-left:8px" onclick="${subscribed ? 'disableNotifications()' : 'enableNotifications()'}">${subscribed ? 'Turn off' : 'Enable on this device'}</button>
-    </div>
-    ${subscribed ? `
-      <label style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:rgba(0,0,0,0.25);border-radius:6px;cursor:pointer">
-        <input type="checkbox" id="notify-all" ${info.notifyAll ? 'checked' : ''} onchange="setNotifyAll(this.checked)" style="margin-top:3px;width:16px;height:16px;accent-color:var(--blue)">
-        <div>
-          <div style="font-weight:600;font-size:13px;color:var(--text)">Notify me on every league HR</div>
-          <div class="input-help">Your own players get a celebration; others get a quick factual update. Quiet hours 11 PM – 9 AM PT.</div>
-        </div>
-      </label>
-    ` : '<p class="input-help">Each device subscribes separately.</p>'}
-  `;
-}
-
-function urlBase64ToUint8Array(b64) {
-  const padding = '='.repeat((4 - b64.length % 4) % 4);
-  const base64 = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base64);
-  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
-}
-async function enableNotifications() {
-  try {
-    const info = await (await fetch(API_PUSH, { headers: authHeaders() })).json();
-    if (!info.publicKey) return;
-    const reg = await navigator.serviceWorker.register('/sw.js');
-    await navigator.serviceWorker.ready;
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') { alert('Notifications were not allowed.'); return; }
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(info.publicKey),
-    });
-    await fetch(API_PUSH, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', ...authHeaders()},
-      body: JSON.stringify({action:'subscribe', subscription: sub.toJSON()}),
-    });
-    renderNotificationsPanel();
-  } catch (e) { alert('Could not enable: ' + e.message); }
-}
-async function disableNotifications() {
-  try {
-    const reg = await navigator.serviceWorker.getRegistration();
-    const sub = reg ? await reg.pushManager.getSubscription() : null;
-    if (sub) {
-      await sub.unsubscribe();
-      await fetch(API_PUSH, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json', ...authHeaders()},
-        body: JSON.stringify({action:'unsubscribe', subscription: sub.toJSON()}),
-      });
-    }
-    renderNotificationsPanel();
-  } catch (e) { alert('Could not disable: ' + e.message); }
-}
 async function setNotifyAll(value) {
   try {
     await fetch(API_PUSH, {

@@ -125,5 +125,36 @@ export default async (req) => {
     return Response.json({ ok: true, token: sessionToken, email, displayName: user.displayName, isAdmin: isAdminEmail(email) });
   }
 
+  // ── UPDATE DISPLAY NAME ──
+  if (body.action === 'update-display-name') {
+    const session = await verifyAuth(req);
+    if (!session) return Response.json({ ok: false, error: 'Not signed in' }, { status: 401 });
+    const displayName = String(body.displayName || '').trim();
+    if (!displayName) return Response.json({ ok: false, error: 'Display name cannot be empty' }, { status: 400 });
+    const user = await getUser(session.email);
+    if (!user) return Response.json({ ok: false, error: 'Account not found' }, { status: 404 });
+    await saveUser({ ...user, displayName });
+    return Response.json({ ok: true, displayName }, { headers: NO_CACHE });
+  }
+
+  // ── CHANGE PASSWORD ──
+  if (body.action === 'change-password') {
+    const session = await verifyAuth(req);
+    if (!session) return Response.json({ ok: false, error: 'Not signed in' }, { status: 401 });
+    const user = await getUser(session.email);
+    if (!user) return Response.json({ ok: false, error: 'Account not found' }, { status: 404 });
+    const currentPassword = String(body.currentPassword || '');
+    const newPassword     = String(body.newPassword     || '');
+    if (hashPassword(currentPassword, user.salt) !== user.hash) {
+      return Response.json({ ok: false, error: 'Current password is incorrect' }, { status: 401 });
+    }
+    if (newPassword.length < 6) {
+      return Response.json({ ok: false, error: 'New password must be at least 6 characters' }, { status: 400 });
+    }
+    const salt = crypto.randomBytes(16).toString('hex');
+    await saveUser({ ...user, salt, hash: hashPassword(newPassword, salt) });
+    return Response.json({ ok: true }, { headers: NO_CACHE });
+  }
+
   return Response.json({ ok: false, error: 'Unknown action' }, { status: 400 });
 };
