@@ -95,15 +95,15 @@ async function fetchNextGame(league, playerName, teamAbbr) {
       }
 
       if (!finalStates.has(state)) {
-        // Upcoming game
+        // Upcoming game — store the raw UTC ISO string so the browser can
+        // reformat it in each manager's own local timezone automatically.
         const gameTime = g.gameDate ? new Date(g.gameDate) : null;
         if (!gameTime) return { status: 'upcoming', label: 'Today' };
         const now = new Date();
         const diffHours = (gameTime - now) / 3600000;
         if (diffHours < 0) continue; // already started/final
-        if (diffHours < 1) return { status: 'upcoming', label: 'Soon' };
-        const localTime = gameTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
-        return { status: 'upcoming', label: localTime };
+        if (diffHours < 0.5) return { status: 'upcoming', label: 'Soon' };
+        return { status: 'upcoming', label: g.gameDate }; // raw ISO — browser localizes
       }
     }
     return null; // all games today are final
