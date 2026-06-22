@@ -1,18 +1,17 @@
 // Sync core — runs against a single explicit league.
-// All HR detection, baseline tracking, change logging, and streak calculation
-// happens inside the league record itself.
+// All HR detection, baseline tracking, change logging, streak calculation,
+// and 24h HR tracking happen inside the league record itself.
 import { loadLeague, saveLeague, listLeagues, ensureLegacyMigrated } from './storage.mjs';
 
 export function normName(n) {
-  return (n || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return (n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 const VERIFIED_IDS = {
-  'aaron judge': 592450,
+  'aaron judge':  592450,
   'shohei ohtani': 660271,
-  'nick kurtz': 701762,
+  'nick kurtz':   701762,
 };
 
 async function resolvePlayerId(league, playerName) {
@@ -38,14 +37,79 @@ async function fetchGameLogStats(league, playerName, season) {
   if (!resp.ok) throw new Error(`MLB gameLog ${resp.status}`);
   const data = await resp.json();
   const splits = data?.stats?.[0]?.splits || [];
-  const cutoff = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-  let last7 = 0, seasonHR = 0;
+
+  const now = Date.now();
+  const cutoff7d  = new Date(now - 7  * 86400000).toISOString().slice(0, 10);
+  const cutoff24h = new Date(now - 1  * 86400000).toISOString().slice(0, 10);
+
+  let last7 = 0, last24h = 0, seasonHR = 0;
   for (const s of splits) {
-    const hr = parseInt(s?.stat?.homeRuns) || 0;
+    const hr   = parseInt(s?.stat?.homeRuns) || 0;
+    const date = s.date || '';
     seasonHR += hr;
-    if ((s.date || '') >= cutoff) last7 += hr;
+    if (date >= cutoff7d)  last7   += hr;
+    if (date >= cutoff24h) last24h += hr;
   }
-  return { last7, seasonHR };
+  return { last7, last24h, seasonHR };
+}
+
+// Fetch today's schedule and find if this player's team has a game today or
+// in the next 24 hours. Returns null if no upcoming game found.
+async function fetchNextGame(league, playerName, teamAbbr) {
+  try {
+    const id = await resolvePlayerId(league, playerName);
+    // Get player's current team from their profile
+    const profileUrl = `https://statsapi.mlb.com/api/v1/people/${id}?hydrate=currentTeam`;
+    const profileResp = await fetch(profileUrl);
+    if (!profileResp.ok) return null;
+    const profile = await profileResp.json();
+    const teamId = profile?.people?.[0]?.currentTeam?.id;
+    if (!teamId) return null;
+
+    // Get schedule for today + tomorrow
+    const today = new Date().toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const schedUrl = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${today}&endDate=${tomorrow}&teamId=${teamId}&hydrate=linescore`;
+    const schedResp = await fetch(schedUrl);
+    if (!schedResp.ok) return null;
+    const sched = await schedResp.json();
+
+    const games = (sched.dates || []).flatMap(d => d.games || []);
+    if (!games.length) return null;
+
+    // Find the first non-Final game, or the currently live one
+    const liveStates   = new Set(['I', 'Live', 'In Progress']);
+    const finalStates  = new Set(['F', 'Final', 'Game Over', 'FT']);
+    const preStates    = new Set(['P', 'Pre-Game', 'S', 'Scheduled', 'Preview']);
+
+    for (const g of games) {
+      const state = g.status?.abstractGameState || '';
+      const detail = g.status?.detailedState || '';
+      const linescore = g.linescore || {};
+
+      if (liveStates.has(state) || detail.includes('In Progress')) {
+        // Game is live — return current inning info
+        const inning = linescore.currentInning || '?';
+        const half   = linescore.isTopInning ? 'Top' : 'Bot';
+        return { status: 'live', label: `${half} ${inning}` };
+      }
+
+      if (!finalStates.has(state)) {
+        // Upcoming game — store the raw UTC ISO string so the browser can
+        // reformat it in each manager's own local timezone automatically.
+        const gameTime = g.gameDate ? new Date(g.gameDate) : null;
+        if (!gameTime) return { status: 'upcoming', label: 'Today' };
+        const now = new Date();
+        const diffHours = (gameTime - now) / 3600000;
+        if (diffHours < 0) continue; // already started/final
+        if (diffHours < 0.5) return { status: 'upcoming', label: 'Soon' };
+        return { status: 'upcoming', label: g.gameDate }; // raw ISO — browser localizes
+      }
+    }
+    return null; // all games today are final
+  } catch (e) {
+    return null; // non-fatal
+  }
 }
 
 function logChange(league, player, delta, mgr, month, src) {
@@ -54,6 +118,7 @@ function logChange(league, player, delta, mgr, month, src) {
   if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
 }
 
+// Returns { names: string[], hr: number } — names has multiple entries on a tie.
 function computeLeader(league) {
   const key = league.currentMonth;
   if (!key || !league.months?.[key]) return null;
@@ -62,14 +127,14 @@ function computeLeader(league) {
     totals[mgr] = (league.months[key].rosters[mgr] || [])
       .reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
   }
-  let leader = null, max = -1;
-  for (const [m, t] of Object.entries(totals)) {
-    if (t > max) { max = t; leader = m; }
-  }
-  return leader ? { name: leader, hr: max } : null;
+  let max = -1;
+  for (const t of Object.values(totals)) if (t > max) max = t;
+  if (max < 0) return null;
+  const names = Object.entries(totals).filter(([, t]) => t === max).map(([m]) => m);
+  return { names, hr: max };
 }
 
-// Sync a single league.
+// ── Main sync ──
 export async function runSyncForLeague(leagueId) {
   const league = await loadLeague(leagueId);
   if (!league) return { ok: false, error: 'League not found' };
@@ -77,12 +142,15 @@ export async function runSyncForLeague(leagueId) {
   const key = league.currentMonth;
   if (!key || !league.months?.[key]) return { ok: false, error: 'No active month' };
   if (!league.seasonBaseline) league.seasonBaseline = {};
-  if (!league.streaks) league.streaks = {};
-  if (!league.seasonHints) league.seasonHints = {};
+  if (!league.streaks)        league.streaks = {};
+  if (!league.seasonHints)    league.seasonHints = {};
+  if (!league.last24h)        league.last24h = {};
+  if (!league.nextGame)       league.nextGame = {};
 
   const [, mYear] = key.split('-');
   const seasonYear = mYear || String(new Date().getFullYear());
 
+  // Collect unique players across all rosters for this month
   const playerSet = new Set();
   for (const mgr of league.managers) {
     for (const p of (league.months[key].rosters[mgr] || [])) {
@@ -92,13 +160,23 @@ export async function runSyncForLeague(leagueId) {
   const players = [...playerSet];
   if (!players.length) return { ok: false, error: 'No players on roster' };
 
-  const hrEvents = [];
+  const hrEvents  = [];
   const leaderBefore = computeLeader(league);
 
+  // Fetch stats + next game in parallel
   const results = await Promise.all(players.map(async (p) => {
     try {
-      const { last7, seasonHR } = await fetchGameLogStats(league, p, seasonYear);
-      return { player: p, last7, seasonHR, ok: true };
+      // Find the team abbreviation for this player from any roster slot
+      let teamAbbr = null;
+      for (const mgr of league.managers) {
+        const slot = (league.months[key].rosters[mgr] || []).find(s => s.player === p);
+        if (slot?.team) { teamAbbr = slot.team; break; }
+      }
+      const [stats, nextGame] = await Promise.all([
+        fetchGameLogStats(league, p, seasonYear),
+        fetchNextGame(league, p, teamAbbr),
+      ]);
+      return { player: p, ...stats, nextGame, ok: true };
     } catch (e) {
       return { player: p, ok: false, err: e.message };
     }
@@ -111,8 +189,12 @@ export async function runSyncForLeague(leagueId) {
     const nk = normName(r.player);
     if (!r.ok) { failed.push(r.player); continue; }
 
-    league.streaks[nk] = r.last7;
+    league.streaks[nk]     = r.last7;
+    league.last24h[nk]     = r.last24h;
     league.seasonHints[nk] = r.seasonHR;
+    // Always write nextGame — even null — so stale pre-formatted strings
+    // from older syncs get evicted and replaced with fresh ISO-timestamp data.
+    league.nextGame[nk] = r.nextGame;
 
     const baseline = league.seasonBaseline[nk];
     if (baseline === undefined) {
@@ -128,7 +210,12 @@ export async function runSyncForLeague(leagueId) {
             logChange(league, slot.player, delta, mgr, key, 'sync');
             if (delta > 0) {
               added += delta;
-              hrEvents.push({ player: slot.player, delta, mgr });
+              hrEvents.push({
+                player:        slot.player,
+                delta,
+                mgr,
+                baselineAfter: r.seasonHR,   // used for stable notification tag
+              });
             }
           }
         }
@@ -141,8 +228,13 @@ export async function runSyncForLeague(leagueId) {
   league.lastSync = Date.now();
   await saveLeague(league);
 
-  // Notification dispatch (fire-and-forget, scoped to this league)
-  if (hrEvents.length || (leaderAfter && leaderBefore && leaderAfter.name !== leaderBefore.name)) {
+  // Dispatch notifications — fire-and-forget
+  const needsNotification =
+    hrEvents.length > 0 ||
+    (leaderBefore && leaderAfter &&
+     JSON.stringify(leaderBefore.names.sort()) !== JSON.stringify(leaderAfter.names.sort()));
+
+  if (needsNotification) {
     try {
       const { dispatchNotifications } = await import('./notify.mjs');
       await dispatchNotifications({ league, hrEvents, leaderBefore, leaderAfter });
@@ -154,7 +246,6 @@ export async function runSyncForLeague(leagueId) {
   return { ok: true, added, failed, ts: league.lastSync, leagueId };
 }
 
-// Sync every league. Used by the scheduled job.
 export async function runSyncForAllLeagues() {
   await ensureLegacyMigrated();
   const index = await listLeagues();
