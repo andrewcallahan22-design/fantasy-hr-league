@@ -1,6 +1,7 @@
 // Service worker for push notifications.
-// Registered by index.html; the browser keeps it alive in the background to
-// receive pushes even when the site isn't open.
+// VERSION is updated on every deploy so iOS detects changes and refetches.
+// Format: YYYY-MM-DD-HHmm (UTC build time approximation)
+const SW_VERSION = '2026-06-23-0300';
 
 self.addEventListener('push', (event) => {
   let data = { title: '⚾ Home Run!', body: '', url: '/' };
@@ -9,7 +10,7 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(self.registration.showNotification(data.title, {
     body: data.body,
-    icon: '/favicon-192.png',     // graceful fallback if not present
+    icon: '/favicon-192.png',
     badge: '/favicon-96.png',
     tag: data.tag || 'fantasy-hr',
     data: { url: data.url || '/' },
@@ -22,7 +23,6 @@ self.addEventListener('notificationclick', (event) => {
   const targetUrl = (event.notification.data && event.notification.data.url) || '/';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-      // Focus an existing tab if there is one
       for (const c of list) {
         if (c.url.includes(self.registration.scope) && 'focus' in c) return c.focus();
       }
@@ -31,6 +31,22 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Skip waiting so updates pick up on next page load
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+// Skip waiting immediately so updates apply on the very next page load.
+// Combined with clients.claim() this means the new SW takes control of
+// all open tabs right away — no need to close and reopen the app.
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    Promise.all([
+      // Take control of all clients immediately
+      self.clients.claim(),
+      // Tell all open tabs to reload so they pick up the new app version
+      self.clients.matchAll({ type: 'window' }).then(clients => {
+        clients.forEach(client => client.navigate(client.url));
+      }),
+    ])
+  );
+});

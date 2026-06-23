@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#050810">
+<!-- Tell browsers (especially iOS Safari PWA) not to cache this HTML.
+     The service worker handles push notifications only — it does NOT cache
+     app files, so these headers ensure every load fetches fresh HTML. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Fantasy HR League</title>
 <link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="3" fill="%232d7a44"/><path d="M 20 33 L 5 17 Q 20 0 35 17 L 20 33 Z" fill="%23bd7a3e"/><path d="M 20 30 L 12 21 L 20 12 L 28 21 Z" fill="%233aa05c"/><rect x="18.5" y="31.5" width="3" height="3" fill="%23f4f1e6"/><rect x="26.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/><rect x="18.5" y="10.5" width="3" height="3" fill="%23f4f1e6"/><rect x="10.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/></svg>'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1720,8 +1726,490 @@ function renderHistory(body) {
   `;
 }
 
+// ── DRAFT ROOM ──
+// State lives in _draft (fetched from server), _draftFilter, _draftSort,
+// _draftRosterMgr (which manager's roster is shown in the right panel).
+let _draft = null;
+let _draftFilter = { pos: 'ALL', team: 'ALL', health: 'ALL', search: '' };
+let _draftSort = 'hr'; // 'hr' | 'prevHR' | 'name'
+let _draftRosterMgr = null;
+let _draftPollTimer = null;
+
 async function renderDraft(body) {
-  body.innerHTML = `<div class="empty-state"><div class="empty-state-title">Draft room</div><div class="empty-state-body">Full draft portal coming in the next release. For now you can edit rosters directly on the Rosters tab.</div></div>`;
+  if (!SESSION) {
+    body.innerHTML = `<div class="notice info">Sign in to access the draft room.</div>`;
+    return;
+  }
+  body.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted)">Loading draft room…</div>`;
+  await loadDraftState(body);
+}
+
+async function loadDraftState(body) {
+  const leagueId = CURRENT_LEAGUE.league.id;
+  try {
+    const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}`, { headers: authHeaders(), cache: 'no-store' });
+    _draft = await r.json();
+    if (!_draft.ok) throw new Error(_draft.error || 'Failed to load draft');
+    if (!_draftRosterMgr) _draftRosterMgr = _draft.me || CURRENT_LEAGUE.league.managers[0];
+    renderDraftRoom(body || document.getElementById('tab-body'));
+    startDraftPolling();
+  } catch (e) {
+    const el = body || document.getElementById('tab-body');
+    if (el) el.innerHTML = `<div class="notice err">Couldn't load draft room: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function startDraftPolling() {
+  if (_draftPollTimer) clearInterval(_draftPollTimer);
+  if (!_draft?.draft || _draft.draft.status !== 'active') return;
+  _draftPollTimer = setInterval(async () => {
+    if (document.hidden || CURRENT_TAB !== 'draft') return;
+    const leagueId = CURRENT_LEAGUE.league.id;
+    try {
+      const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}`, { headers: authHeaders(), cache: 'no-store' });
+      const fresh = await r.json();
+      if (!fresh.ok) return;
+      const prevPickCount = _draft?.draft?.picks?.length || 0;
+      const newPickCount  = fresh?.draft?.picks?.length  || 0;
+      _draft = fresh;
+      if (newPickCount !== prevPickCount) {
+        renderDraftRoom(document.getElementById('tab-body'));
+      }
+    } catch {}
+  }, 8000);
+}
+
+function renderDraftRoom(body) {
+  if (!body) return;
+  const d = _draft;
+  const league = CURRENT_LEAGUE.league;
+  const isCommish = CURRENT_LEAGUE.isCommish;
+  const myMgr = d.me;
+
+  // ── No draft open yet ──
+  if (!d.draft) {
+    const prev = (() => {
+      const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
+      return keys[keys.length - 1] || league.currentMonth;
+    })();
+    const standings = (league.managers || []).map(m => ({
+      mgr: m,
+      hr: ((league.months[prev]?.rosters[m]) || []).reduce((s, p) => s + (parseInt(p.hr) || 0), 0),
+    })).sort((a, b) => a.hr - b.hr); // worst first = picks first
+
+    body.innerHTML = `
+      <div style="max-width:700px">
+        ${isCommish ? `
+          <div class="panel">
+            <div class="panel-header">Open the Draft</div>
+            <div class="panel-body">
+              <p class="input-help" style="margin-bottom:16px">Configure and open the draft for the next month. Based on <strong>${escapeHtml(prev)}</strong> standings.</p>
+              <div class="settings-row">
+                <div class="field">
+                  <label>Draft type</label>
+                  <select class="select" id="draft-type">
+                    <option value="snake">Snake (1-2-3-4-4-3-2-1)</option>
+                    <option value="straight">Straight (1-2-3-4 repeating)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Rounds</label>
+                  <input class="input" type="number" id="draft-rounds" min="1" max="30" value="${league.settings?.rosterSize || 6}">
+                  <div class="input-help">Defaults to roster size (${league.settings?.rosterSize || 6})</div>
+                </div>
+              </div>
+              <div class="field">
+                <label>Draft order (worst → best record picks first)</label>
+                <div id="draft-order-list" style="background:rgba(0,0,0,0.25);border:1px solid var(--panel-border);border-radius:6px;padding:8px;margin-top:4px">
+                  ${standings.map((s, i) => `
+                    <div class="draft-order-row" data-mgr="${escapeAttr(s.mgr)}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:${i < standings.length - 1 ? '1px dashed var(--panel-border)' : 'none'}">
+                      <span style="font-family:'Roboto Mono',monospace;font-size:12px;color:var(--accent);width:24px">${i + 1}.</span>
+                      <span style="flex:1;font-weight:600">${escapeHtml(s.mgr)}</span>
+                      <span style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-muted)">${s.hr} HR in ${escapeHtml(prev)}</span>
+                      <div style="display:flex;gap:4px">
+                        <button class="btn btn-sm btn-ghost" style="padding:2px 8px" onclick="moveDraftOrder(${i}, -1)">↑</button>
+                        <button class="btn btn-sm btn-ghost" style="padding:2px 8px" onclick="moveDraftOrder(${i}, 1)">↓</button>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+                <div class="input-help">Drag or use arrows to adjust. Commissioner can override the auto order.</div>
+              </div>
+              <div class="error" id="open-draft-err"></div>
+              <button class="btn btn-primary" onclick="submitOpenDraft('${escapeAttr(league.id)}')">Open draft for next month</button>
+            </div>
+          </div>
+        ` : `
+          <div class="empty-state">
+            <div class="empty-state-title">Draft not open yet</div>
+            <div class="empty-state-body">The commissioner hasn't opened the draft for next month. Check back soon.</div>
+          </div>
+        `}
+      </div>
+    `;
+    return;
+  }
+
+  // ── Draft complete ──
+  if (d.draft.status === 'complete') {
+    body.innerHTML = `
+      <div class="notice success" style="margin-bottom:16px">
+        ✓ Draft complete — rosters for <strong>${escapeHtml(d.draft.month)}</strong> have been set.
+        ${isCommish ? `<button class="btn btn-sm btn-ghost" style="margin-left:12px" onclick="resetDraft('${escapeAttr(league.id)}')">Reset draft</button>` : ''}
+      </div>
+      ${renderDraftLog(d.draft, league.managers)}
+    `;
+    return;
+  }
+
+  // ── Active draft ──
+  const picks = d.draft.picks || [];
+  const onClock = d.onClock;
+  const isMyTurn = myMgr === onClock || isCommish;
+  const totalPicks = d.draft.fullOrder?.length || (d.draft.order.length * d.draft.rounds);
+  const pctDone = Math.round((picks.length / totalPicks) * 100);
+
+  // Build position fill state for the roster panel
+  const rosterSlots = _draft.rosterViews?.[_draftRosterMgr] || [];
+  const filledPositions = rosterSlots.filter(Boolean).map(p => p.pos);
+  const rounds = d.draft.rounds || league.settings?.rosterSize || 6;
+
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start" id="draft-grid">
+
+      <!-- LEFT: Draft board -->
+      <div>
+        <!-- On-clock banner -->
+        <div style="background:${onClock === myMgr ? 'rgba(240,199,94,0.12)' : 'rgba(13,22,41,0.85)'};border:1px solid ${onClock === myMgr ? 'rgba(240,199,94,0.4)' : 'var(--panel-border)'};border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:0.1em;color:var(--text-muted);text-transform:uppercase;margin-bottom:3px">On the clock · Round ${d.round} · Pick ${d.pickNumber} of ${totalPicks}</div>
+            <div style="font-size:18px;font-weight:700;color:${onClock === myMgr ? 'var(--accent)' : 'var(--text)'}">
+              ${onClock === myMgr ? '⭐ Your pick!' : `${escapeHtml(onClock)}'s pick`}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <div style="font-family:'Roboto Mono',monospace;font-size:12px;color:var(--text-muted)">${pctDone}% done</div>
+            ${isCommish && onClock !== myMgr ? `<button class="btn btn-sm btn-ghost" onclick="skipDraftPick('${escapeAttr(league.id)}')">Skip ${escapeHtml(onClock)}</button>` : ''}
+            ${isCommish ? `<button class="btn btn-sm btn-danger" onclick="resetDraft('${escapeAttr(league.id)}')">Close draft</button>` : ''}
+          </div>
+        </div>
+
+        <!-- Filters -->
+        <div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:2;min-width:160px">
+            <input class="input compact" id="draft-search" placeholder="Search player…" value="${escapeAttr(_draftFilter.search)}" oninput="setDraftFilter('search', this.value)" style="width:100%">
+          </div>
+          <div>
+            <select class="select" style="padding:6px 8px;font-size:12px" onchange="setDraftFilter('pos', this.value)">
+              ${['ALL','C','1B','2B','3B','SS','OF','RF','CF','LF','DH','SP','RP'].map(p =>
+                `<option value="${p}" ${_draftFilter.pos === p ? 'selected' : ''}>${p === 'ALL' ? 'All Pos' : p}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div>
+            <select class="select" style="padding:6px 8px;font-size:12px" onchange="setDraftFilter('team', this.value)">
+              <option value="ALL">All Teams</option>
+              ${['ATH','ATL','BAL','BOS','CHC','CHW','CIN','CLE','COL','DET','HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','PHI','PIT','SD','SEA','SFG','STL','TB','TEX','TOR','WSH'].map(t =>
+                `<option value="${t}" ${_draftFilter.team === t ? 'selected' : ''}>${t}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div>
+            <select class="select" style="padding:6px 8px;font-size:12px" onchange="setDraftFilter('health', this.value)">
+              <option value="ALL" ${_draftFilter.health === 'ALL' ? 'selected' : ''}>All Health</option>
+              <option value="Active" ${_draftFilter.health === 'Active' ? 'selected' : ''}>Healthy only</option>
+              <option value="IL" ${_draftFilter.health === 'IL' ? 'selected' : ''}>IL</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-sm ${_draftSort === 'hr' ? 'btn-primary' : 'btn-ghost'}" onclick="setDraftSort('hr')">Season HR</button>
+            <button class="btn btn-sm ${_draftSort === 'prevHR' ? 'btn-primary' : 'btn-ghost'}" onclick="setDraftSort('prevHR')">${escapeHtml(d.draft.basedOn?.split('-')[0] || 'Prev')} HR</button>
+            <button class="btn btn-sm ${_draftSort === 'name' ? 'btn-primary' : 'btn-ghost'}" onclick="setDraftSort('name')">A–Z</button>
+          </div>
+        </div>
+
+        <!-- Player pool table -->
+        <div class="panel">
+          <div class="panel-body" style="padding:0;overflow-x:auto;max-height:60vh;overflow-y:auto">
+            <table class="data-table" style="min-width:500px">
+              <thead style="position:sticky;top:0;z-index:2;background:var(--panel-solid)">
+                <tr>
+                  <th style="width:32px">#</th>
+                  <th>Player</th>
+                  <th style="width:44px">Team</th>
+                  <th style="width:36px">Pos</th>
+                  <th class="right" style="width:52px">Ssn HR</th>
+                  <th class="right" style="width:52px">${escapeHtml(d.draft.basedOn?.split('-')[0] || 'Prev')} HR</th>
+                  <th style="width:60px">Health</th>
+                  <th style="width:70px"></th>
+                </tr>
+              </thead>
+              <tbody id="draft-pool-body">
+                ${renderDraftPool(d.pool || [], isMyTurn, onClock, league.id)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Recent picks log -->
+        ${picks.length ? `
+          <div class="panel" style="margin-top:12px">
+            <div class="panel-header">Recent picks</div>
+            <div class="panel-body" style="padding:0;max-height:200px;overflow-y:auto">
+              ${[...picks].reverse().slice(0, 20).map((p, i) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px dashed var(--panel-border);${i === 0 ? 'background:rgba(240,199,94,0.04)' : ''}">
+                  <span style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:28px">#${picks.length - i}</span>
+                  <span style="flex:1;font-weight:${i === 0 ? '600' : '400'};color:var(--text)">${escapeHtml(p.player)}</span>
+                  <span class="team-chip" style="font-size:10px">${escapeHtml(p.team)}</span>
+                  <span class="pos-chip" style="font-size:10px">${escapeHtml(p.pos)}</span>
+                  <span style="font-size:12px;color:var(--text-muted)">${escapeHtml(p.mgr)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- RIGHT: Roster panel -->
+      <div style="position:sticky;top:80px">
+        <div class="panel">
+          <div class="panel-header" style="flex-direction:column;gap:8px;align-items:flex-start">
+            <span>Roster</span>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              ${(league.managers || []).map(m => `
+                <button class="btn btn-sm ${_draftRosterMgr === m ? 'btn-primary' : 'btn-ghost'}" style="font-size:11px;padding:3px 8px" onclick="setDraftRosterMgr('${escapeAttr(m)}')">
+                  ${escapeHtml(m)}${m === myMgr ? ' ★' : ''}
+                </button>
+              `).join('')}
+            </div>
+          </div>
+          <div class="panel-body" style="padding:10px">
+            ${renderRosterPanel(rosterSlots, rounds, filledPositions, league.settings)}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <style>
+      @media (max-width: 760px) {
+        #draft-grid { grid-template-columns: 1fr !important; }
+      }
+    </style>
+  `;
+}
+
+function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
+  const search = _draftFilter.search.toLowerCase();
+  let filtered = pool.filter(p => {
+    if (_draftFilter.pos !== 'ALL' && p.pos !== _draftFilter.pos) return false;
+    if (_draftFilter.team !== 'ALL' && p.team !== _draftFilter.team) return false;
+    if (_draftFilter.health !== 'ALL' && p.health !== _draftFilter.health) return false;
+    if (search && !p.name.toLowerCase().includes(search)) return false;
+    return true;
+  });
+  filtered = filtered.sort((a, b) => {
+    if (_draftSort === 'name') return a.name.localeCompare(b.name);
+    if (_draftSort === 'prevHR') return b.prevHR - a.prevHR;
+    return b.hr - a.hr;
+  });
+  if (!filtered.length) return `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-faint)">No players match your filters</td></tr>`;
+  return filtered.slice(0, 150).map((p, i) => {
+    const drafted = p.drafted;
+    const style = drafted ? 'opacity:0.38;' : '';
+    const healthColor = p.health === 'Active' ? 'var(--green)' : p.health === 'IL' ? 'var(--red)' : 'var(--orange)';
+    return `<tr style="${style}">
+      <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${p.rank || i + 1}</td>
+      <td style="font-weight:600;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</td>
+      <td><span class="team-chip" style="font-size:9px">${escapeHtml(p.team)}</span></td>
+      <td><span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos)}</span></td>
+      <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600">${p.hr}</td>
+      <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-muted)">${p.prevHR || '—'}</td>
+      <td style="font-size:10px;color:${healthColor}">${escapeHtml(p.health)}</td>
+      <td style="text-align:center">
+        ${drafted
+          ? `<span style="font-size:10px;color:var(--text-faint)">${escapeHtml(p.draftedBy || '✓')}</span>`
+          : isMyTurn
+            ? `<button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:11px" onclick="makeDraftPick('${escapeAttr(leagueId)}',${JSON.stringify(p).replace(/'/g, "&#39;")})">Draft</button>`
+            : `<button class="btn btn-sm btn-ghost" style="padding:3px 10px;font-size:11px" disabled>Draft</button>`
+        }
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderRosterPanel(slots, rounds, filledPositions, settings) {
+  const posRule = settings?.positionRule || 'one-duplicate-allowed';
+  const posCounts = {};
+  for (const p of filledPositions) if (p && p !== '?') posCounts[p] = (posCounts[p] || 0) + 1;
+
+  const posAllowed = settings?.positionsAllowed || [];
+
+  return `
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;letter-spacing:0.06em;text-transform:uppercase">
+      ${slots.filter(Boolean).length} / ${rounds} picks made
+    </div>
+    ${Array.from({ length: rounds }, (_, i) => {
+      const slot = slots[i];
+      if (slot && !slot.skipped) {
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--panel-border)">
+          <span style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:16px">${i + 1}</span>
+          <span class="pos-chip" style="font-size:9px">${escapeHtml(slot.pos)}</span>
+          <span style="flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(slot.player)}</span>
+          <span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-faint)">${escapeHtml(slot.team)}</span>
+        </div>`;
+      }
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--panel-border)">
+        <span style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:16px">${i + 1}</span>
+        <span style="font-size:12px;color:var(--text-faint);font-style:italic">— open —</span>
+      </div>`;
+    }).join('')}
+
+    ${posAllowed.length ? `
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--panel-border)">
+        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Position tracker</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          ${posAllowed.map(pos => {
+            const count = posCounts[pos] || 0;
+            let maxAllowed = Infinity;
+            if (posRule === 'all-unique') maxAllowed = 1;
+            else if (posRule === 'one-duplicate-allowed') maxAllowed = 2;
+            const full = count >= maxAllowed;
+            return `<span style="font-family:'Roboto Mono',monospace;font-size:9px;padding:2px 6px;border-radius:3px;
+              background:${count > 0 ? (full ? 'rgba(239,68,68,0.15)' : 'rgba(58,160,92,0.15)') : 'rgba(255,255,255,0.06)'};
+              color:${count > 0 ? (full ? 'var(--red)' : 'var(--green)') : 'var(--text-faint)'};
+              text-decoration:${full ? 'line-through' : 'none'}">
+              ${escapeHtml(pos)}${count > 0 ? ` ×${count}` : ''}
+            </span>`;
+          }).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+}
+
+function renderDraftLog(draft, managers) {
+  const picks = draft.picks || [];
+  return `
+    <div class="panel">
+      <div class="panel-header">Draft Results — ${escapeHtml(draft.month)}</div>
+      <div class="panel-body" style="padding:0;overflow-x:auto">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width:40px">Pick</th>
+              <th style="width:60px">Round</th>
+              ${managers.map(m => `<th>${escapeHtml(m)}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${Array.from({ length: draft.rounds || 6 }, (_, round) => {
+              const roundPicks = picks.slice(round * managers.length, (round + 1) * managers.length);
+              return `<tr>
+                <td style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-faint)">${round * managers.length + 1}–${(round + 1) * managers.length}</td>
+                <td style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-muted)">${round + 1}</td>
+                ${managers.map(m => {
+                  const pick = roundPicks.find(p => p.mgr === m);
+                  return `<td style="font-size:12px">${pick ? `<strong>${escapeHtml(pick.player)}</strong><br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(pick.team)} · ${escapeHtml(pick.pos)}</span>` : '—'}</td>`;
+                }).join('')}
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// ── Draft actions ──
+function setDraftFilter(key, value) {
+  _draftFilter[key] = value;
+  const tbody = document.getElementById('draft-pool-body');
+  if (tbody && _draft?.pool) {
+    tbody.innerHTML = renderDraftPool(
+      _draft.pool,
+      _draft.me === _draft.onClock || CURRENT_LEAGUE.isCommish,
+      _draft.onClock,
+      CURRENT_LEAGUE.league.id
+    );
+  }
+}
+function setDraftSort(sort) {
+  _draftSort = sort;
+  setDraftFilter('search', _draftFilter.search); // re-render
+}
+function setDraftRosterMgr(mgr) {
+  _draftRosterMgr = mgr;
+  renderDraftRoom(document.getElementById('tab-body'));
+}
+
+// Draft order reordering (up/down arrows)
+function moveDraftOrder(idx, dir) {
+  const rows = [...document.querySelectorAll('.draft-order-row')];
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= rows.length) return;
+  const parent = rows[0].parentNode;
+  if (dir === -1) parent.insertBefore(rows[idx], rows[newIdx]);
+  else parent.insertBefore(rows[newIdx], rows[idx]);
+}
+
+async function submitOpenDraft(leagueId) {
+  const err = document.getElementById('open-draft-err');
+  err.textContent = '';
+  const draftType = document.getElementById('draft-type').value;
+  const rounds    = parseInt(document.getElementById('draft-rounds').value) || 6;
+  const order     = [...document.querySelectorAll('.draft-order-row')].map(r => r.dataset.mgr);
+  try {
+    const r = await fetch(API_DRAFT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'open', leagueId, draftType, rounds, order }),
+    });
+    const res = await r.json();
+    if (!res.ok) { err.textContent = res.error || 'Failed to open draft'; return; }
+    await loadDraftState(document.getElementById('tab-body'));
+  } catch (e) {
+    err.textContent = 'Connection failed';
+  }
+}
+
+async function makeDraftPick(leagueId, player) {
+  try {
+    const r = await fetch(API_DRAFT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'pick', leagueId, pick: { player: player.name, team: player.team, pos: player.pos, hr: player.hr, mlbId: player.id } }),
+    });
+    const res = await r.json();
+    if (!res.ok) { alert(res.error || 'Pick failed'); return; }
+    await loadDraftState(document.getElementById('tab-body'));
+  } catch (e) {
+    alert('Connection failed — try again');
+  }
+}
+
+async function skipDraftPick(leagueId) {
+  if (!confirm('Skip this manager\'s pick?')) return;
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'skip', leagueId }),
+  });
+  const res = await r.json();
+  if (!res.ok) { alert(res.error); return; }
+  await loadDraftState(document.getElementById('tab-body'));
+}
+
+async function resetDraft(leagueId) {
+  if (!confirm('Close the draft? All picks will be lost.')) return;
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'close', leagueId }),
+  });
+  const res = await r.json();
+  if (!res.ok) { alert(res.error); return; }
+  _draft = null;
+  await loadDraftState(document.getElementById('tab-body'));
 }
 
 // ── MY SETTINGS TAB ──
@@ -2274,6 +2762,20 @@ function ordinal(n) { const s = ['th','st','nd','rd']; const v = n % 100; return
 
 (async function init() {
   renderAccountChip();
+
+  // Register service worker and check for updates on every load.
+  // This is what makes iOS PWA pick up new versions — without an explicit
+  // update() call, iOS can cache the old SW for days.
+  if ('serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      // Force update check — critical for iOS PWA to detect new versions
+      reg.update().catch(() => {});
+    } catch (e) {
+      console.log('SW registration failed:', e);
+    }
+  }
+
   if (SESSION) {
     try {
       const r = await fetch(API_AUTH, { headers: authHeaders(), cache: 'no-store' });

@@ -1,26 +1,25 @@
 // Draft endpoint — per-league. Requires ?leagueId=ID on every request.
 //
-// Rules enforced server-side:
-//   • rosterSize picks per manager
-//   • Team uniqueness governed by league.settings.teamRule
-//   • Position rule governed by league.settings.positionRule
-//   • Draft order: reverse of latest month's standings
-//   • Picks are casual (no clock)
-//
-// On final pick: creates next month's rosters and switches currentMonth.
+// GET  ?leagueId=ID          → draft state + player pool (400 hitters)
+// POST { action: 'open',  leagueId, draftType, rounds, order? }
+// POST { action: 'pick',  leagueId, pick: {player,team,pos,hr,mlbId} }
+// POST { action: 'undo',  leagueId }
+// POST { action: 'skip',  leagueId, manager }  (commissioner only)
+// POST { action: 'close', leagueId }            (commissioner only)
 
 import { getStore } from '@netlify/blobs';
 import { verifyAuth, isCommissioner, managerForUser } from './lib/auth.mjs';
 import { loadLeague, saveLeague, ensureLegacyMigrated } from './lib/storage.mjs';
 import { normName } from './lib/core.mjs';
 
-const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTHS = ['January','February','March','April','May','June','July','August',
+                'September','October','November','December'];
 
 const TEAM_ABBR = {
   108:'LAA',109:'ARI',110:'BAL',111:'BOS',112:'CHC',113:'CIN',114:'CLE',115:'COL',
-  116:'DET',117:'HOU',118:'KC',119:'LAD',120:'WSH',121:'NYM',133:'ATH',134:'PIT',
-  135:'SD',136:'SEA',137:'SFG',138:'STL',139:'TB',140:'TEX',141:'TOR',142:'MIN',
-  143:'PHI',144:'ATL',145:'CHW',146:'MIA',147:'NYY',158:'MIL'
+  116:'DET',117:'HOU',118:'KC', 119:'LAD',120:'WSH',121:'NYM',133:'ATH',134:'PIT',
+  135:'SD', 136:'SEA',137:'SFG',138:'STL',139:'TB', 140:'TEX',141:'TOR',142:'MIN',
+  143:'PHI',144:'ATL',145:'CHW',146:'MIA',147:'NYY',158:'MIL',
 };
 
 function monthSortKey(k) {
@@ -33,6 +32,12 @@ function nextMonthKey(latest) {
   if (mi > 11) { mi = 0; yi++; }
   return `${MONTHS[mi]}-${yi}`;
 }
+function prevMonthKey(latest) {
+  const [m, y] = latest.split('-');
+  let mi = MONTHS.indexOf(m) - 1, yi = parseInt(y);
+  if (mi < 0) { mi = 11; yi--; }
+  return `${MONTHS[mi]}-${yi}`;
+}
 function monthTotal(league, key, mgr) {
   return ((league.months[key]?.rosters?.[mgr]) || [])
     .reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
@@ -41,10 +46,7 @@ export function positionsValid(positions, rule) {
   if (rule === 'unrestricted') return true;
   const counts = {};
   for (const p of positions) if (p) counts[p] = (counts[p] || 0) + 1;
-  if (rule === 'all-unique') {
-    return Object.values(counts).every(c => c <= 1);
-  }
-  // default: one-duplicate-allowed
+  if (rule === 'all-unique') return Object.values(counts).every(c => c <= 1);
   let dups = 0;
   for (const c of Object.values(counts)) {
     if (c > 2) return false;
@@ -53,43 +55,119 @@ export function positionsValid(positions, rule) {
   return dups <= 1;
 }
 
-async function fetchPlayerPool() {
+// ── Player pool ──
+// Fetches top 400 hitters by season HR from the MLB Stats API.
+// Also fetches injury/roster status and previous-month HR stats.
+// Pool is cached in Netlify Blobs for 10 minutes to avoid hammering the API.
+async function fetchPlayerPool(prevMonthKey) {
   const store = getStore('league');
-  const cached = await store.get('playerPool', { type: 'json' });
+  const cacheKey = `playerPool-${prevMonthKey || 'none'}`;
+  const cached = await store.get(cacheKey, { type: 'json' });
   if (cached && Date.now() - cached.t < 10 * 60 * 1000) return cached.pool;
 
-  const url = 'https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=2026&sportId=1&limit=150';
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`MLB leaders ${resp.status}`);
-  const data = await resp.json();
-  const leaders = data?.leagueLeaders?.[0]?.leaders || [];
-  const pool = leaders.map(l => ({
-    name: l?.person?.fullName || '',
-    team: TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
-    pos: l?.position?.abbreviation || '',
-    hr: parseInt(l?.value) || 0,
-    rank: l?.rank || 0,
-  })).filter(p => p.name);
+  const season = new Date().getFullYear();
 
-  await store.setJSON('playerPool', { t: Date.now(), pool });
+  // Fetch top 400 hitters by HR (covers everyone relevant)
+  const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=400&hydrate=person,team`;
+  const hrResp = await fetch(hrUrl);
+  if (!hrResp.ok) throw new Error(`MLB leaders ${hrResp.status}`);
+  const hrData = await hrResp.json();
+  const leaders = hrData?.leagueLeaders?.[0]?.leaders || [];
+
+  // Fetch IL / injury status for all active players
+  let injuryMap = {};
+  try {
+    const ilUrl = `https://statsapi.mlb.com/api/v1/sports/1/players?season=${season}&gameType=R&fields=people,id,fullName,status`;
+    const ilResp = await fetch(ilUrl);
+    if (ilResp.ok) {
+      const ilData = await ilResp.json();
+      for (const p of (ilData.people || [])) {
+        const code = p.status?.code || 'A';
+        injuryMap[p.id] = code; // A=Active, D7=7-day IL, D10=10-day IL, D15, D60, etc.
+      }
+    }
+  } catch {}
+
+  // Fetch previous month HR stats if we have a prev month key
+  let prevMonthHRMap = {};
+  if (prevMonthKey) {
+    try {
+      const [pm, py] = prevMonthKey.split('-');
+      const pmIdx = MONTHS.indexOf(pm);
+      if (pmIdx >= 0) {
+        const startDate = `${py}-${String(pmIdx + 1).padStart(2, '0')}-01`;
+        const lastDay = new Date(parseInt(py), pmIdx + 1, 0).getDate();
+        const endDate = `${py}-${String(pmIdx + 1).padStart(2, '0')}-${lastDay}`;
+        const pmUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${py}&sportId=1&limit=200&startDate=${startDate}&endDate=${endDate}`;
+        const pmResp = await fetch(pmUrl);
+        if (pmResp.ok) {
+          const pmData = await pmResp.json();
+          for (const l of (pmData?.leagueLeaders?.[0]?.leaders || [])) {
+            if (l?.person?.id) prevMonthHRMap[l.person.id] = parseInt(l.value) || 0;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const pool = leaders.map(l => {
+    const id = l?.person?.id;
+    const statusCode = id ? (injuryMap[id] || 'A') : 'A';
+    let healthStatus = 'Active';
+    if (statusCode === 'A') healthStatus = 'Active';
+    else if (statusCode.startsWith('D')) healthStatus = 'IL';
+    else if (statusCode === 'DL') healthStatus = 'IL';
+    else healthStatus = statusCode;
+
+    return {
+      id,
+      name: l?.person?.fullName || '',
+      team: TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
+      pos: l?.position?.abbreviation || '',
+      hr: parseInt(l?.value) || 0,
+      prevHR: id ? (prevMonthHRMap[id] || 0) : 0,
+      health: healthStatus,
+      rank: l?.rank || 0,
+    };
+  }).filter(p => p.name);
+
+  await store.setJSON(cacheKey, { t: Date.now(), pool });
   return pool;
+}
+
+function snakeOrder(managers, rounds) {
+  const order = [];
+  for (let r = 0; r < rounds; r++) {
+    const row = r % 2 === 0 ? [...managers] : [...managers].reverse();
+    order.push(...row);
+  }
+  return order;
+}
+function straightOrder(managers, rounds) {
+  const order = [];
+  for (let r = 0; r < rounds; r++) order.push(...managers);
+  return order;
 }
 
 function draftView(league, session) {
   const d = league.draft || null;
-  let onClock = null, round = 0;
+  let onClock = null, round = 0, pick = 0;
   if (d && d.status === 'active') {
-    onClock = d.order[d.picks.length % d.order.length];
-    round = Math.floor(d.picks.length / d.order.length) + 1;
+    pick = d.picks.length;
+    onClock = d.fullOrder ? d.fullOrder[pick] : d.order[pick % d.order.length];
+    round = d.fullOrder
+      ? Math.floor(pick / d.order.length) + 1
+      : Math.floor(pick / d.order.length) + 1;
   }
   const myManager = session ? managerForUser(league, session.email) : null;
-  return { draft: d, onClock, round, me: myManager };
+  return { draft: d, onClock, round, pickNumber: (d?.picks?.length || 0) + 1, me: myManager };
 }
 
 export default async (req) => {
   await ensureLegacyMigrated();
   const url = new URL(req.url);
-  const leagueId = url.searchParams.get('leagueId') || (req.method === 'POST' ? (await req.clone().json().catch(() => ({}))).leagueId : null);
+  const leagueId = url.searchParams.get('leagueId') ||
+    (req.method === 'POST' ? (await req.clone().json().catch(() => ({}))).leagueId : null);
   if (!leagueId) return Response.json({ ok: false, error: 'leagueId required' }, { status: 400 });
 
   const league = await loadLeague(leagueId);
@@ -99,25 +177,47 @@ export default async (req) => {
   const myMgr = session ? managerForUser(league, session.email) : null;
 
   if (req.method === 'GET') {
+    // Figure out the previous month for prev-month HR stats
+    const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
+    const basedOn = league.draft?.basedOn || (keys.length ? keys[keys.length - 1] : null);
+    const prevKey = basedOn ? prevMonthKey(basedOn) : null;
+
     let pool = [], poolError = null;
-    try { pool = await fetchPlayerPool(); }
+    try { pool = await fetchPlayerPool(prevKey); }
     catch (e) { poolError = e.message; }
 
     const d = league.draft;
-    const active = d && d.status === 'active';
-    const takenTeams = active ? d.picks.map(p => p.team) : [];
-    const takenPlayers = active ? d.picks.map(p => normName(p.player)) : [];
-    const available = pool.filter(p => !takenPlayers.includes(normName(p.name)));
+    const takenNorms = (d?.picks || []).map(p => normName(p.player));
+    const poolWithStatus = pool.map(p => ({
+      ...p,
+      drafted: takenNorms.includes(normName(p.name)),
+      draftedBy: takenNorms.includes(normName(p.name))
+        ? (d.picks.find(pk => normName(pk.player) === normName(p.name))?.mgr || null)
+        : null,
+    }));
+
+    // Build per-manager roster view for the draft
+    const rosterViews = {};
+    if (d) {
+      for (const mgr of league.managers) {
+        const picks = (d.picks || []).filter(p => p.mgr === mgr);
+        const slots = Array.from({ length: d.rounds || league.settings?.rosterSize || 6 }, (_, i) => picks[i] || null);
+        rosterViews[mgr] = slots;
+      }
+    }
 
     return Response.json({
+      ok: true,
       ...draftView(league, session),
-      pool: available,
-      takenTeams,
+      pool: poolWithStatus,
       poolError,
+      rosterViews,
+      managers: league.managers,
       rosterSize: league.settings?.rosterSize || 6,
       positionsAllowed: league.settings?.positionsAllowed || league.positions || [],
       teamRule: league.settings?.teamRule || 'all-unique',
       positionRule: league.settings?.positionRule || 'one-duplicate-allowed',
+      isCommish: session ? isCommissioner(league, session.email) : false,
     });
   }
 
@@ -125,55 +225,100 @@ export default async (req) => {
   if (!session) return Response.json({ ok: false, error: 'Sign in required' }, { status: 401 });
   const body = await req.json().catch(() => ({}));
 
+  // ── OPEN DRAFT ──
   if (body.action === 'open') {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {
       return Response.json({ ok: false, error: 'Only the commissioner can open a draft' }, { status: 403 });
     }
-    if (league.draft && league.draft.status === 'active') {
+    if (league.draft?.status === 'active') {
       return Response.json({ ok: false, error: 'A draft is already in progress' }, { status: 400 });
     }
-    const keys = Object.keys(league.months).sort((a, b) => monthSortKey(a) - monthSortKey(b));
+    const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
     const latest = keys[keys.length - 1] || league.currentMonth;
     const newMonth = nextMonthKey(latest);
-    if (league.months[newMonth]) {
+    if (league.months?.[newMonth]) {
       return Response.json({ ok: false, error: `${newMonth} already exists` }, { status: 400 });
     }
-    const order = [...league.managers].sort((a, b) => monthTotal(league, latest, a) - monthTotal(league, latest, b));
+
+    // Draft order: reverse standings of previous month (worst record picks first)
+    const baseOrder = (body.order?.length === league.managers.length)
+      ? body.order
+      : [...league.managers].sort((a, b) => monthTotal(league, latest, a) - monthTotal(league, latest, b));
+
+    const draftType = body.draftType || league.settings?.draftType || 'snake';
+    const rounds    = parseInt(body.rounds) || league.settings?.rosterSize || 6;
+    const fullOrder = draftType === 'snake'
+      ? snakeOrder(baseOrder, rounds)
+      : straightOrder(baseOrder, rounds);
+
     league.draft = {
-      month: newMonth, basedOn: latest, status: 'active', order, picks: [],
+      month: newMonth, basedOn: latest, status: 'active',
+      draftType, rounds,
+      order: baseOrder,   // base order (without snake reversal)
+      fullOrder,          // fully expanded pick-by-pick order
+      picks: [],
       createdAt: Date.now(), openedBy: session.email,
     };
     await saveLeague(league);
     return Response.json({ ok: true, ...draftView(league, session) });
   }
 
+  // ── MAKE A PICK ──
   if (body.action === 'pick') {
     const d = league.draft;
-    if (!d || d.status !== 'active') return Response.json({ ok: false, error: 'No active draft' }, { status: 400 });
-    const onClock = d.order[d.picks.length % d.order.length];
-    if (myMgr !== onClock && !session.isAdmin) {
+    if (!d || d.status !== 'active') {
+      return Response.json({ ok: false, error: 'No active draft' }, { status: 400 });
+    }
+    const pickIdx = d.picks.length;
+    const onClock = d.fullOrder ? d.fullOrder[pickIdx] : d.order[pickIdx % d.order.length];
+
+    // Commissioner can pick for anyone; regular managers only pick for themselves
+    if (myMgr !== onClock && !session.isAdmin && !isCommissioner(league, session.email)) {
       return Response.json({ ok: false, error: `It's ${onClock}'s pick, not yours` }, { status: 403 });
     }
-    const { player, team, pos, hr } = body.pick || {};
-    if (!player || !team || !pos) return Response.json({ ok: false, error: 'Pick needs player, team, position' }, { status: 400 });
+    const { player, team, pos, hr, mlbId } = body.pick || {};
+    if (!player || !team || !pos) {
+      return Response.json({ ok: false, error: 'Pick needs player, team, position' }, { status: 400 });
+    }
+
+    // Player uniqueness
     if (!league.settings?.multiPlayerPerTeam) {
       if (d.picks.some(p => normName(p.player) === normName(player))) {
         return Response.json({ ok: false, error: `${player} has already been drafted` }, { status: 400 });
       }
     }
-    if (league.settings?.teamRule === 'all-unique' && d.picks.some(p => p.team === team)) {
-      return Response.json({ ok: false, error: `${team} is already taken — league uses unique-team rule` }, { status: 400 });
+
+    // Team rule
+    if (league.settings?.teamRule === 'all-unique') {
+      const allTeams = d.picks.map(p => p.team);
+      if (allTeams.includes(team)) {
+        return Response.json({ ok: false, error: `${team} is already taken — league uses unique-team rule` }, { status: 400 });
+      }
     }
-    const myPositions = d.picks.filter(p => p.mgr === onClock).map(p => p.pos);
-    if (!positionsValid([...myPositions, pos], league.settings?.positionRule || 'one-duplicate-allowed')) {
+
+    // Position rule for this manager
+    const myPos = d.picks.filter(p => p.mgr === onClock).map(p => p.pos);
+    if (!positionsValid([...myPos, pos], league.settings?.positionRule || 'one-duplicate-allowed')) {
       return Response.json({ ok: false, error: 'Position rule violated for your roster' }, { status: 400 });
     }
-    d.picks.push({ mgr: onClock, player, team, pos, hr: parseInt(hr) || 0, t: Date.now() });
 
-    if (d.picks.length === d.order.length * (league.settings?.rosterSize || 6)) {
+    d.picks.push({ mgr: onClock, player, team, pos, hr: parseInt(hr) || 0, mlbId, t: Date.now() });
+
+    // Draft complete when all picks are done
+    const totalPicks = d.fullOrder ? d.fullOrder.length : d.order.length * d.rounds;
+    if (d.picks.length >= totalPicks) {
+      // Auto-populate the new month's rosters
       const rosters = {};
       league.managers.forEach(m => { rosters[m] = []; });
-      d.picks.forEach(p => rosters[p.mgr].push({ player: p.player, team: p.team, position: p.pos, hr: 0 }));
+      for (const p of d.picks) {
+        rosters[p.mgr] = rosters[p.mgr] || [];
+        rosters[p.mgr].push({ player: p.player, team: p.team, position: p.pos, hr: 0 });
+      }
+      // Pad any short rosters to rosterSize
+      const rs = league.settings?.rosterSize || 6;
+      for (const m of league.managers) {
+        while (rosters[m].length < rs) rosters[m].push({ player: '', team: '', position: '', hr: 0 });
+      }
       league.months[d.month] = { rosters };
       league.currentMonth = d.month;
       d.status = 'complete';
@@ -183,6 +328,7 @@ export default async (req) => {
     return Response.json({ ok: true, ...draftView(league, session) });
   }
 
+  // ── UNDO LAST PICK ──
   if (body.action === 'undo') {
     const d = league.draft;
     if (!d || d.status !== 'active' || !d.picks.length) {
@@ -190,11 +336,38 @@ export default async (req) => {
     }
     const last = d.picks[d.picks.length - 1];
     if (last.mgr !== myMgr && !session.isAdmin && !isCommissioner(league, session.email)) {
-      return Response.json({ ok: false, error: 'Only the picker (or commissioner) can undo' }, { status: 403 });
+      return Response.json({ ok: false, error: 'Only the picker or commissioner can undo' }, { status: 403 });
     }
     d.picks.pop();
     await saveLeague(league);
     return Response.json({ ok: true, ...draftView(league, session) });
+  }
+
+  // ── SKIP (commissioner advances past a stalled manager) ──
+  if (body.action === 'skip') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can skip' }, { status: 403 });
+    }
+    const d = league.draft;
+    if (!d || d.status !== 'active') {
+      return Response.json({ ok: false, error: 'No active draft' }, { status: 400 });
+    }
+    const pickIdx = d.picks.length;
+    const onClock = d.fullOrder ? d.fullOrder[pickIdx] : d.order[pickIdx % d.order.length];
+    // Insert a "skipped" placeholder pick
+    d.picks.push({ mgr: onClock, player: '— skipped —', team: '?', pos: '?', hr: 0, skipped: true, t: Date.now() });
+    await saveLeague(league);
+    return Response.json({ ok: true, ...draftView(league, session) });
+  }
+
+  // ── CLOSE DRAFT (commissioner resets) ──
+  if (body.action === 'close') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can close the draft' }, { status: 403 });
+    }
+    league.draft = null;
+    await saveLeague(league);
+    return Response.json({ ok: true });
   }
 
   return Response.json({ ok: false, error: 'Unknown action' }, { status: 400 });
