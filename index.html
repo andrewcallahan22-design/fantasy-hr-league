@@ -1304,7 +1304,7 @@ function canEditMgrRoster(mgr) {
   if (!SESSION) return false;
   if (SESSION.isAdmin) return true;
   if (CURRENT_LEAGUE.isCommish) return true;
-  return CURRENT_LEAGUE.myManager === mgr;
+  return false; // Regular members cannot edit rosters or HR counts — commissioner only
 }
 
 // Fire emoji scales with 7-day streak:
@@ -1380,9 +1380,8 @@ function renderScoreboard(body) {
   const leaders  = totals.filter(t => t.hr === max && max > 0);
   const isTied   = leaders.length > 1;
 
-  // Has the new sync data been stored yet?
-  const has24h     = league.last24h   && Object.keys(league.last24h).length   > 0;
-  const hasNextGame = league.nextGame && Object.keys(league.nextGame).length   > 0;
+  // Has streak/3d data been populated by a sync yet?
+  const has3d = league.last24h && Object.keys(league.last24h).length > 0;
 
   let html = '<div class="stat-grid">';
   let rankCursor = 1;
@@ -1402,17 +1401,17 @@ function renderScoreboard(body) {
   }
   html += '</div>';
 
-  // Show a one-time nudge if new fields haven't been populated by a sync yet
-  if (!has24h || !hasNextGame) {
+  // Nudge if sync data hasn't populated yet
+  if (!has3d) {
     html += `<div class="notice info" style="margin-bottom:12px">
-      <strong>+24h and Next Game</strong> columns populate after the next auto-sync (within 1 minute).
+      <strong>+3d</strong> column populates after the next auto-sync (within 1 minute).
       <button class="btn btn-sm" style="margin-left:10px" onclick="syncCurrentLeague()">⟳ Sync now</button>
     </div>`;
   }
 
-  // Columns: Player | Pos | Team | Next Game | +24h | HR
-  // HR is last so it aligns with the "X HR" total in the panel header.
-  // Pos is tight (3-4 chars), Team is tight chip — both before Next Game.
+  // Columns: Player | Pos | Team | +3d | HR
+  // Pos and Team are kept very tight on mobile so player name + fire emojis
+  // have maximum breathing room. HR is last, aligning with the panel header total.
   for (const mgr of league.managers) {
     const roster = month.rosters[mgr] || [];
     const total  = roster.reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
@@ -1425,48 +1424,47 @@ function renderScoreboard(body) {
         <div class="panel-body" style="padding:0;overflow-x:auto">
           <table class="data-table" style="table-layout:fixed;width:100%">
             <colgroup>
-              <col style="min-width:140px">
-              <col style="width:44px">
-              <col style="width:52px">
-              <col style="width:100px">
-              <col style="width:48px">
-              <col style="width:44px">
+              <col><!-- Player: takes all remaining space -->
+              <col style="width:36px"><!-- Pos -->
+              <col style="width:40px"><!-- Team -->
+              <col style="width:40px"><!-- +3d -->
+              <col style="width:38px"><!-- HR -->
             </colgroup>
             <thead>
               <tr>
                 <th>Player</th>
-                <th>Pos</th>
-                <th>Team</th>
-                <th>Next Game</th>
-                <th class="right" style="white-space:nowrap">+24h</th>
-                <th class="right">HR</th>
+                <th style="font-size:10px;padding:9px 4px">Pos</th>
+                <th style="font-size:10px;padding:9px 4px">Team</th>
+                <th class="right" style="font-size:10px;padding:9px 4px;white-space:nowrap">+3d</th>
+                <th class="right" style="font-size:10px;padding:9px 6px">HR</th>
               </tr>
             </thead>
             <tbody>
               ${roster.map((p, idx) => {
-                if (!p.player) return `<tr><td colspan="6" style="color:var(--text-faint);font-style:italic;padding:9px 12px">— slot ${idx + 1} open —</td></tr>`;
+                if (!p.player) return `<tr><td colspan="5" style="color:var(--text-faint);font-style:italic;padding:9px 12px">— slot ${idx + 1} open —</td></tr>`;
                 const nk         = normName(p.player);
                 const streak     = league.streaks?.[nk];
-                const hr24       = league.last24h?.[nk];
-                const ng         = league.nextGame?.[nk];
+                const hr3d       = league.last24h?.[nk]; // field name kept as last24h in storage; now represents 3-day window after next sync
                 const seasonHint = league.seasonHints?.[nk];
                 const badge      = streakBadge(streak, p.player);
                 const seasonLine = seasonHint !== undefined
-                  ? `<div style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);margin-top:2px">${seasonHint} season</div>`
+                  ? `<div style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-faint);margin-top:1px">${seasonHint} ssn</div>`
                   : '';
-                // +24h: show +N in green if they homered in last 24h, dash otherwise
-                const hr24Cell = (hr24 !== undefined && hr24 > 0)
-                  ? `<span style="font-family:'Roboto Mono',monospace;font-weight:700;color:var(--green)">+${hr24}</span>`
-                  : `<span style="color:var(--text-faint)">—</span>`;
+                const hr3dCell = (hr3d !== undefined && hr3d > 0)
+                  ? `<span style="font-family:'Roboto Mono',monospace;font-weight:700;font-size:12px;color:var(--green)">+${hr3d}</span>`
+                  : `<span style="color:var(--text-faint);font-size:11px">—</span>`;
                 return `<tr>
-                  <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                    <strong>${escapeHtml(p.player)}</strong>${badge}${seasonLine}
+                  <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">
+                    <strong style="font-size:13px">${escapeHtml(p.player)}</strong>${badge}${seasonLine}
                   </td>
-                  <td><span class="pos-chip" style="font-size:10px;padding:1px 5px">${escapeHtml(p.position || '—')}</span></td>
-                  <td><span class="team-chip" style="font-size:10px;padding:1px 5px">${escapeHtml(p.team || '—')}</span></td>
-                  <td style="padding-right:6px">${nextGameBadge(ng)}</td>
-                  <td class="right">${hr24Cell}</td>
-                  <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700;color:var(--text);font-size:14px">${p.hr || 0}</td>
+                  <td style="padding:6px 3px">
+                    <span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--blue);background:rgba(96,165,250,0.12);padding:1px 3px;border-radius:3px;white-space:nowrap">${escapeHtml(p.position || '—')}</span>
+                  </td>
+                  <td style="padding:6px 3px">
+                    <span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-muted);background:rgba(255,255,255,0.07);padding:1px 3px;border-radius:3px;white-space:nowrap">${escapeHtml(p.team || '—')}</span>
+                  </td>
+                  <td class="right" style="padding:6px 4px">${hr3dCell}</td>
+                  <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700;color:var(--text);font-size:14px;padding:6px 6px">${p.hr || 0}</td>
                 </tr>`;
               }).join('')}
             </tbody>

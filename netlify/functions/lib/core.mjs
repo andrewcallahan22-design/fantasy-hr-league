@@ -40,7 +40,7 @@ async function fetchGameLogStats(league, playerName, season) {
 
   const now = Date.now();
   const cutoff7d  = new Date(now - 7  * 86400000).toISOString().slice(0, 10);
-  const cutoff24h = new Date(now - 1  * 86400000).toISOString().slice(0, 10);
+  const cutoff3d  = new Date(now - 3  * 86400000).toISOString().slice(0, 10);
 
   let last7 = 0, last24h = 0, seasonHR = 0;
   for (const s of splits) {
@@ -48,7 +48,7 @@ async function fetchGameLogStats(league, playerName, season) {
     const date = s.date || '';
     seasonHR += hr;
     if (date >= cutoff7d)  last7   += hr;
-    if (date >= cutoff24h) last24h += hr;
+    if (date >= cutoff3d)  last24h += hr; // stored as last24h but now tracks 3-day window
   }
   return { last7, last24h, seasonHR };
 }
