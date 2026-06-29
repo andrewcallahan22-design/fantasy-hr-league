@@ -57,25 +57,26 @@ export function positionsValid(positions, rule) {
 
 // ── Player pool ──
 // Fetches top 400 hitters by season HR from the MLB Stats API.
-// Also fetches injury/roster status and previous-month HR stats.
-// Pool is cached in Netlify Blobs for 10 minutes to avoid hammering the API.
-async function fetchPlayerPool(prevMonthKey) {
+// Also fetches injury/roster status.
+// Previous-month HR data comes from the league's own stored roster data
+// (overlaid in the GET handler below) — no separate API call needed.
+// Pool is cached in Netlify Blobs for 5 minutes.
+async function fetchPlayerPool() {
   const store = getStore('league');
-  // v2 suffix forces cache bust after fixing the prev-month HR query
-  const cacheKey = `playerPool-v2-${prevMonthKey || 'none'}`;
+  const cacheKey = `playerPool-v3`;
   const cached = await store.get(cacheKey, { type: 'json' });
   if (cached && Date.now() - cached.t < 5 * 60 * 1000) return cached.pool;
 
   const season = new Date().getFullYear();
 
-  // Fetch top 400 hitters by HR (covers everyone relevant)
+  // Fetch top 400 hitters by HR
   const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=400&hydrate=person,team`;
   const hrResp = await fetch(hrUrl);
   if (!hrResp.ok) throw new Error(`MLB leaders ${hrResp.status}`);
   const hrData = await hrResp.json();
   const leaders = hrData?.leagueLeaders?.[0]?.leaders || [];
 
-  // Fetch IL / injury status for all active players
+  // Fetch injury/roster status
   let injuryMap = {};
   try {
     const ilUrl = `https://statsapi.mlb.com/api/v1/sports/1/players?season=${season}&gameType=R&fields=people,id,fullName,status`;
@@ -83,62 +84,27 @@ async function fetchPlayerPool(prevMonthKey) {
     if (ilResp.ok) {
       const ilData = await ilResp.json();
       for (const p of (ilData.people || [])) {
-        const code = p.status?.code || 'A';
-        injuryMap[p.id] = code; // A=Active, D7=7-day IL, D10=10-day IL, D15, D60, etc.
+        injuryMap[p.id] = p.status?.code || 'A';
       }
     }
   } catch {}
 
-  // Fetch previous month HR stats using the correct isolated date-range endpoint.
-  // The leaders endpoint ignores date ranges for cumulative stats — we need the
-  // stats endpoint with gameType=R and the exact month date range instead.
-  let prevMonthHRMap = {};
-  if (prevMonthKey) {
-    try {
-      const [pm, py] = prevMonthKey.split('-');
-      const pmIdx = MONTHS.indexOf(pm);
-      if (pmIdx >= 0) {
-        const startDate = `${py}-${String(pmIdx + 1).padStart(2, '0')}-01`;
-        const lastDay   = new Date(parseInt(py), pmIdx + 1, 0).getDate();
-        const endDate   = `${py}-${String(pmIdx + 1).padStart(2, '0')}-${lastDay}`;
-
-        // Use the hitting stats endpoint with date range — this correctly
-        // returns stats ONLY for games played within that date window.
-        const pmUrl = `https://statsapi.mlb.com/api/v1/stats?stats=byDateRange&group=hitting&gameType=R&startDate=${startDate}&endDate=${endDate}&season=${py}&sportId=1&limit=300&fields=stats,splits,stat,homeRuns,player,id,fullName`;
-        const pmResp = await fetch(pmUrl);
-        if (pmResp.ok) {
-          const pmData = await pmResp.json();
-          const splits = pmData?.stats?.[0]?.splits || [];
-          for (const s of splits) {
-            const id = s?.player?.id;
-            const hr = parseInt(s?.stat?.homeRuns) || 0;
-            if (id && hr > 0) prevMonthHRMap[id] = hr;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('prevMonthHR fetch failed:', e.message);
-    }
-  }
-
   const pool = leaders.map(l => {
     const id = l?.person?.id;
     const statusCode = id ? (injuryMap[id] || 'A') : 'A';
-    let healthStatus = 'Active';
-    if (statusCode === 'A') healthStatus = 'Active';
-    else if (statusCode.startsWith('D')) healthStatus = 'IL';
-    else if (statusCode === 'DL') healthStatus = 'IL';
-    else healthStatus = statusCode;
+    let health = 'Active';
+    if (statusCode.startsWith('D') || statusCode === 'DL') health = 'IL';
+    else if (statusCode !== 'A') health = statusCode;
 
     return {
       id,
-      name: l?.person?.fullName || '',
-      team: TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
-      pos: l?.position?.abbreviation || '',
-      hr: parseInt(l?.value) || 0,
-      prevHR: id ? (prevMonthHRMap[id] || 0) : 0,
-      health: healthStatus,
-      rank: l?.rank || 0,
+      name:    l?.person?.fullName || '',
+      team:    TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
+      pos:     l?.position?.abbreviation || '',
+      hr:      parseInt(l?.value) || 0,
+      prevHR:  0,   // overlaid from league roster data in GET handler
+      health,
+      rank:    l?.rank || 0,
     };
   }).filter(p => p.name);
 
@@ -188,14 +154,36 @@ export default async (req) => {
   const myMgr = session ? managerForUser(league, session.email) : null;
 
   if (req.method === 'GET') {
-    // Figure out the previous month for prev-month HR stats
+    // Figure out which month to show prev-month HRs from.
+    // "basedOn" is the most recent completed month (what draft order is based on).
     const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
     const basedOn = league.draft?.basedOn || (keys.length ? keys[keys.length - 1] : null);
-    const prevKey = basedOn ? prevMonthKey(basedOn) : null;
+
+    // Build a name → HR map from the league's own stored roster data for basedOn month.
+    // This is fast, accurate, and already correct — no MLB API call needed.
+    // Only covers players currently on rosters, but that's exactly who needs accurate
+    // prev-month numbers for draft context. Everyone else shows 0 or — which is fine.
+    const prevMonthRosterHR = {};
+    if (basedOn && league.months?.[basedOn]) {
+      for (const mgr of (league.managers || [])) {
+        for (const slot of (league.months[basedOn].rosters?.[mgr] || [])) {
+          if (slot.player) {
+            const nk = normName(slot.player);
+            prevMonthRosterHR[nk] = (prevMonthRosterHR[nk] || 0) + (parseInt(slot.hr) || 0);
+          }
+        }
+      }
+    }
 
     let pool = [], poolError = null;
-    try { pool = await fetchPlayerPool(prevKey); }
+    try { pool = await fetchPlayerPool(); }
     catch (e) { poolError = e.message; }
+
+    // Overlay prev month HRs from league data onto the pool
+    pool = pool.map(p => ({
+      ...p,
+      prevHR: prevMonthRosterHR[normName(p.name)] ?? p.prevHR ?? 0,
+    }));
 
     const d = league.draft;
     const takenNorms = (d?.picks || []).map(p => normName(p.player));

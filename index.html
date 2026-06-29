@@ -1947,7 +1947,7 @@ function renderDraftRoom(body) {
                   <th style="width:44px">Team</th>
                   <th style="width:36px">Pos</th>
                   <th class="right" style="width:52px">Ssn HR</th>
-                  <th class="right" style="width:52px">${escapeHtml(d.draft.basedOn?.split('-')[0] || 'Prev')} HR</th>
+                  <th class="right" style="width:52px">${escapeHtml((d.draft?.basedOn || 'Prev').split('-')[0])} HR</th>
                   <th style="width:60px">Health</th>
                   <th style="width:70px"></th>
                 </tr>
