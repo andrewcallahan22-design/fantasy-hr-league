@@ -1,7 +1,7 @@
 // Service worker for push notifications.
 // VERSION is updated on every deploy so iOS detects changes and refetches.
 // Format: YYYY-MM-DD-HHmm (UTC build time approximation)
-const SW_VERSION = '2026-06-23-0300';
+const SW_VERSION = '2026-06-29-go-yard';
 
 self.addEventListener('push', (event) => {
   let data = { title: '⚾ Home Run!', body: '', url: '/' };

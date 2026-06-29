@@ -10,7 +10,11 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Fantasy HR League</title>
+<title>Go Yard</title>
+<meta name="description" content="Go Yard — home run fantasy baseball for your crew. Draft hitters, track HRs in real time, get notified when your players go deep.">
+<meta name="apple-mobile-web-app-title" content="Go Yard">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="3" fill="%232d7a44"/><path d="M 20 33 L 5 17 Q 20 0 35 17 L 20 33 Z" fill="%23bd7a3e"/><path d="M 20 30 L 12 21 L 20 12 L 28 21 Z" fill="%233aa05c"/><rect x="18.5" y="31.5" width="3" height="3" fill="%23f4f1e6"/><rect x="26.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/><rect x="18.5" y="10.5" width="3" height="3" fill="%23f4f1e6"/><rect x="10.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/></svg>'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -533,7 +537,7 @@ body::before {
 <!-- ── HEADER ── -->
 <header class="site-header">
   <div class="brand" onclick="navigate('/')">
-    <svg width="36" height="36" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-label="Fantasy HR League">
+    <svg width="36" height="36" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-label="Go Yard">
       <rect width="40" height="40" rx="3" fill="#2d7a44"/>
       <path d="M 20 33 L 5 17 Q 20 0 35 17 L 20 33 Z" fill="#bd7a3e"/>
       <path d="M 20 30 L 12 21 L 20 12 L 28 21 Z" fill="#3aa05c"/>
@@ -545,7 +549,7 @@ body::before {
       <rect x="18.5" y="10.5" width="3" height="3" fill="#f4f1e6"/>
       <rect x="10.5" y="19.5" width="3" height="3" fill="#f4f1e6"/>
     </svg>
-    <span class="brand-title">Fantasy <em>HR</em> League</span>
+    <span class="brand-title">Go <em>Yard</em></span>
   </div>
   <div class="header-right">
     <div class="sync-status" id="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-msg"></span></div>
@@ -895,9 +899,9 @@ function renderHomepage() {
   const v = document.getElementById('view');
   v.innerHTML = `
     <div class="hero">
-      <div class="hero-eyebrow">Start your own league in 30 seconds</div>
-      <h1 class="hero-title">Fantasy <em>Home Run</em> League</h1>
-      <p class="hero-sub">Draft hitters, sync stats in real-time from the official MLB feed, get push notifications when your players go yard. Free, simple, built for friends.</p>
+      <div class="hero-eyebrow">Home run fantasy. Nothing else.</div>
+      <h1 class="hero-title">Go <em>Yard</em></h1>
+      <p class="hero-sub">Draft hitters, track home runs in real-time from the official MLB feed, and get push notifications the moment your players go yard. Simple, fast, built for your crew.</p>
       <div class="hero-cta">
         <button class="btn btn-primary" onclick="onCreateClick()">Start a league</button>
         <button class="btn btn-ghost" onclick="openAuth('login')">I have an account</button>
