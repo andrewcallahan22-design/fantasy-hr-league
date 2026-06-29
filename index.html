@@ -2189,7 +2189,14 @@ async function submitOpenDraft(leagueId) {
 // by index so we never have to serialize a player object into an onclick attribute.
 async function makeDraftPickByIndex(idx) {
   const player = window._draftFilteredPool?.[idx];
-  if (!player) { alert('Player not found — try refreshing the draft board.'); return; }
+  if (!player) {
+    alert(`Player not found at index ${idx}. Pool size: ${window._draftFilteredPool?.length ?? 'undefined'}. Try refreshing.`);
+    return;
+  }
+  if (!player.name || !player.team || !player.pos) {
+    alert(`Player data incomplete: name="${player.name}" team="${player.team}" pos="${player.pos}". Try refreshing the draft board.`);
+    return;
+  }
   await makeDraftPick(CURRENT_LEAGUE.league.id, player);
 }
 

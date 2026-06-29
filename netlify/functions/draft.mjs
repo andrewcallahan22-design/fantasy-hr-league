@@ -100,7 +100,7 @@ async function fetchPlayerPool() {
       id,
       name:    l?.person?.fullName || '',
       team:    TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
-      pos:     l?.position?.abbreviation || '',
+      pos:     l?.position?.abbreviation || l?.person?.primaryPosition?.abbreviation || '?',
       hr:      parseInt(l?.value) || 0,
       prevHR:  0,   // overlaid from league roster data in GET handler
       health,
@@ -282,9 +282,11 @@ export default async (req) => {
       return Response.json({ ok: false, error: `It's ${onClock}'s pick, not yours` }, { status: 403 });
     }
     const { player, team, pos, hr, mlbId } = body.pick || {};
-    if (!player || !team || !pos) {
-      return Response.json({ ok: false, error: 'Pick needs player, team, position' }, { status: 400 });
+    if (!player || !team) {
+      return Response.json({ ok: false, error: 'Pick needs player and team' }, { status: 400 });
     }
+    // pos can be empty/unknown for some players (e.g. two-way players) — default to '?'
+    const safePos = pos || '?';
 
     // Player uniqueness
     if (!league.settings?.multiPlayerPerTeam) {
@@ -303,11 +305,11 @@ export default async (req) => {
 
     // Position rule for this manager
     const myPos = d.picks.filter(p => p.mgr === onClock).map(p => p.pos);
-    if (!positionsValid([...myPos, pos], league.settings?.positionRule || 'one-duplicate-allowed')) {
+    if (safePos !== '?' && !positionsValid([...myPos, safePos], league.settings?.positionRule || 'one-duplicate-allowed')) {
       return Response.json({ ok: false, error: 'Position rule violated for your roster' }, { status: 400 });
     }
 
-    d.picks.push({ mgr: onClock, player, team, pos, hr: parseInt(hr) || 0, mlbId, t: Date.now() });
+    d.picks.push({ mgr: onClock, player, team, pos: safePos, hr: parseInt(hr) || 0, mlbId, t: Date.now() });
 
     // Draft complete when all picks are done
     const totalPicks = d.fullOrder ? d.fullOrder.length : d.order.length * d.rounds;
