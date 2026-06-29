@@ -61,9 +61,10 @@ export function positionsValid(positions, rule) {
 // Pool is cached in Netlify Blobs for 10 minutes to avoid hammering the API.
 async function fetchPlayerPool(prevMonthKey) {
   const store = getStore('league');
-  const cacheKey = `playerPool-${prevMonthKey || 'none'}`;
+  // v2 suffix forces cache bust after fixing the prev-month HR query
+  const cacheKey = `playerPool-v2-${prevMonthKey || 'none'}`;
   const cached = await store.get(cacheKey, { type: 'json' });
-  if (cached && Date.now() - cached.t < 10 * 60 * 1000) return cached.pool;
+  if (cached && Date.now() - cached.t < 5 * 60 * 1000) return cached.pool;
 
   const season = new Date().getFullYear();
 
@@ -88,7 +89,9 @@ async function fetchPlayerPool(prevMonthKey) {
     }
   } catch {}
 
-  // Fetch previous month HR stats if we have a prev month key
+  // Fetch previous month HR stats using the correct isolated date-range endpoint.
+  // The leaders endpoint ignores date ranges for cumulative stats — we need the
+  // stats endpoint with gameType=R and the exact month date range instead.
   let prevMonthHRMap = {};
   if (prevMonthKey) {
     try {
@@ -96,18 +99,26 @@ async function fetchPlayerPool(prevMonthKey) {
       const pmIdx = MONTHS.indexOf(pm);
       if (pmIdx >= 0) {
         const startDate = `${py}-${String(pmIdx + 1).padStart(2, '0')}-01`;
-        const lastDay = new Date(parseInt(py), pmIdx + 1, 0).getDate();
-        const endDate = `${py}-${String(pmIdx + 1).padStart(2, '0')}-${lastDay}`;
-        const pmUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${py}&sportId=1&limit=200&startDate=${startDate}&endDate=${endDate}`;
+        const lastDay   = new Date(parseInt(py), pmIdx + 1, 0).getDate();
+        const endDate   = `${py}-${String(pmIdx + 1).padStart(2, '0')}-${lastDay}`;
+
+        // Use the hitting stats endpoint with date range — this correctly
+        // returns stats ONLY for games played within that date window.
+        const pmUrl = `https://statsapi.mlb.com/api/v1/stats?stats=byDateRange&group=hitting&gameType=R&startDate=${startDate}&endDate=${endDate}&season=${py}&sportId=1&limit=300&fields=stats,splits,stat,homeRuns,player,id,fullName`;
         const pmResp = await fetch(pmUrl);
         if (pmResp.ok) {
           const pmData = await pmResp.json();
-          for (const l of (pmData?.leagueLeaders?.[0]?.leaders || [])) {
-            if (l?.person?.id) prevMonthHRMap[l.person.id] = parseInt(l.value) || 0;
+          const splits = pmData?.stats?.[0]?.splits || [];
+          for (const s of splits) {
+            const id = s?.player?.id;
+            const hr = parseInt(s?.stat?.homeRuns) || 0;
+            if (id && hr > 0) prevMonthHRMap[id] = hr;
           }
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('prevMonthHR fetch failed:', e.message);
+    }
   }
 
   const pool = leaders.map(l => {
@@ -240,12 +251,18 @@ export default async (req) => {
       return Response.json({ ok: false, error: `${newMonth} already exists` }, { status: 400 });
     }
 
-    // Draft order: reverse standings of previous month (worst record picks first)
+    // Draft order: reverse of SEASON-LONG standings (worst total HR picks first).
+    // Sums HR across all months so the manager who struggled all season gets
+    // the first pick — fairer than just the prior month.
+    const seasonTotals = (mgr) =>
+      Object.keys(league.months || {}).reduce((s, k) => s + monthTotal(league, k, mgr), 0);
+
     const baseOrder = (body.order?.length === league.managers.length)
       ? body.order
-      : [...league.managers].sort((a, b) => monthTotal(league, latest, a) - monthTotal(league, latest, b));
+      : [...league.managers].sort((a, b) => seasonTotals(a) - seasonTotals(b));
 
-    const draftType = body.draftType || league.settings?.draftType || 'snake';
+    // Default to straight draft (1-2-3-4 repeating), not snake.
+    const draftType = body.draftType || league.settings?.draftType || 'straight';
     const rounds    = parseInt(body.rounds) || league.settings?.rosterSize || 6;
     const fullOrder = draftType === 'snake'
       ? snakeOrder(baseOrder, rounds)

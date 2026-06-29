@@ -1796,9 +1796,13 @@ function renderDraftRoom(body) {
       const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
       return keys[keys.length - 1] || league.currentMonth;
     })();
+
+    // Season-long totals — worst picks first
     const standings = (league.managers || []).map(m => ({
       mgr: m,
-      hr: ((league.months[prev]?.rosters[m]) || []).reduce((s, p) => s + (parseInt(p.hr) || 0), 0),
+      hr: Object.keys(league.months || {}).reduce((s, k) => {
+        return s + ((league.months[k]?.rosters[m]) || []).reduce((t, p) => t + (parseInt(p.hr) || 0), 0);
+      }, 0),
     })).sort((a, b) => a.hr - b.hr); // worst first = picks first
 
     body.innerHTML = `
@@ -1812,8 +1816,8 @@ function renderDraftRoom(body) {
                 <div class="field">
                   <label>Draft type</label>
                   <select class="select" id="draft-type">
+                    <option value="straight" selected>Straight (1-2-3-4 repeating)</option>
                     <option value="snake">Snake (1-2-3-4-4-3-2-1)</option>
-                    <option value="straight">Straight (1-2-3-4 repeating)</option>
                   </select>
                 </div>
                 <div class="field">
@@ -1823,13 +1827,13 @@ function renderDraftRoom(body) {
                 </div>
               </div>
               <div class="field">
-                <label>Draft order (worst → best record picks first)</label>
+                <label>Draft order (worst season HR → best picks first)</label>
                 <div id="draft-order-list" style="background:rgba(0,0,0,0.25);border:1px solid var(--panel-border);border-radius:6px;padding:8px;margin-top:4px">
                   ${standings.map((s, i) => `
                     <div class="draft-order-row" data-mgr="${escapeAttr(s.mgr)}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:${i < standings.length - 1 ? '1px dashed var(--panel-border)' : 'none'}">
                       <span style="font-family:'Roboto Mono',monospace;font-size:12px;color:var(--accent);width:24px">${i + 1}.</span>
                       <span style="flex:1;font-weight:600">${escapeHtml(s.mgr)}</span>
-                      <span style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-muted)">${s.hr} HR in ${escapeHtml(prev)}</span>
+                      <span style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-muted)">${s.hr} HR season total</span>
                       <div style="display:flex;gap:4px">
                         <button class="btn btn-sm btn-ghost" style="padding:2px 8px" onclick="moveDraftOrder(${i}, -1)">↑</button>
                         <button class="btn btn-sm btn-ghost" style="padding:2px 8px" onclick="moveDraftOrder(${i}, 1)">↓</button>
