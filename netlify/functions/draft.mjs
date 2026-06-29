@@ -186,21 +186,42 @@ export default async (req) => {
     }));
 
     const d = league.draft;
-    const takenNorms = (d?.picks || []).map(p => normName(p.player));
-    const poolWithStatus = pool.map(p => ({
-      ...p,
-      drafted: takenNorms.includes(normName(p.name)),
-      draftedBy: takenNorms.includes(normName(p.name))
-        ? (d.picks.find(pk => normName(pk.player) === normName(p.name))?.mgr || null)
-        : null,
-    }));
+    const picks = d?.picks || [];
+    const takenNorms  = picks.map(p => normName(p.player));
+    const takenTeams  = new Set(picks.filter(p => !p.skipped).map(p => p.team));
+
+    // Per-manager position counts — used for position rule enforcement
+    const mgrPosCounts = {};
+    for (const mgr of (league.managers || [])) {
+      mgrPosCounts[mgr] = {};
+      for (const pk of picks.filter(p => p.mgr === mgr && !p.skipped)) {
+        mgrPosCounts[mgr][pk.pos] = (mgrPosCounts[mgr][pk.pos] || 0) + 1;
+      }
+    }
+
+    const poolWithStatus = pool.map(p => {
+      const isPlayerDrafted = takenNorms.includes(normName(p.name));
+      const isTeamTaken     = takenTeams.has(p.team);
+      const draftedBy = isPlayerDrafted
+        ? (picks.find(pk => normName(pk.player) === normName(p.name))?.mgr || null)
+        : isTeamTaken
+          ? (picks.find(pk => pk.team === p.team && !pk.skipped)?.mgr || null)
+          : null;
+
+      return {
+        ...p,
+        drafted:      isPlayerDrafted || isTeamTaken,
+        draftedBy,
+        teamTaken:    isTeamTaken && !isPlayerDrafted, // team taken but not this specific player
+      };
+    });
 
     // Build per-manager roster view for the draft
     const rosterViews = {};
     if (d) {
       for (const mgr of league.managers) {
-        const picks = (d.picks || []).filter(p => p.mgr === mgr);
-        const slots = Array.from({ length: d.rounds || league.settings?.rosterSize || 6 }, (_, i) => picks[i] || null);
+        const mgrPicks = picks.filter(p => p.mgr === mgr);
+        const slots = Array.from({ length: d.rounds || league.settings?.rosterSize || 6 }, (_, i) => mgrPicks[i] || null);
         rosterViews[mgr] = slots;
       }
     }
@@ -211,6 +232,8 @@ export default async (req) => {
       pool: poolWithStatus,
       poolError,
       rosterViews,
+      mgrPosCounts,
+      takenTeams: [...takenTeams],
       managers: league.managers,
       rosterSize: league.settings?.rosterSize || 6,
       positionsAllowed: league.settings?.positionsAllowed || league.positions || [],
