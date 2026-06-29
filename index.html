@@ -1917,9 +1917,10 @@ function renderDraftRoom(body) {
           <div>
             <select class="select" style="padding:6px 8px;font-size:12px" onchange="setDraftFilter('team', this.value)">
               <option value="ALL">All Teams</option>
-              ${['ATH','ATL','BAL','BOS','CHC','CHW','CIN','CLE','COL','DET','HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','PHI','PIT','SD','SEA','SFG','STL','TB','TEX','TOR','WSH'].map(t =>
-                `<option value="${t}" ${_draftFilter.team === t ? 'selected' : ''}>${t}</option>`
-              ).join('')}
+              ${['ATH','ATL','BAL','BOS','CHC','CHW','CIN','CLE','COL','DET','HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','PHI','PIT','SD','SEA','SFG','STL','TB','TEX','TOR','WSH'].map(t => {
+                const taken = (_draft?.takenTeams || []).includes(t);
+                return `<option value="${t}" ${_draftFilter.team === t ? 'selected' : ''} ${taken ? 'disabled' : ''} style="${taken ? 'text-decoration:line-through;color:#6b7280;' : ''}">${taken ? '✕ ' : ''}${t}</option>`;
+              }).join('')}
             </select>
           </div>
           <div>
