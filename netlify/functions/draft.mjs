@@ -57,29 +57,42 @@ export function positionsValid(positions, rule) {
 
 // ── Player pool ──
 // Fetches top 400 hitters by season HR from the MLB Stats API.
-// Also fetches injury/roster status.
-// Previous-month HR data comes from the league's own stored roster data
-// (overlaid in the GET handler below) — no separate API call needed.
 // Pool is cached in Netlify Blobs for 5 minutes.
 async function fetchPlayerPool() {
   const store = getStore('league');
-  const cacheKey = `playerPool-v3`;
+  const cacheKey = `playerPool-v4`;
   const cached = await store.get(cacheKey, { type: 'json' });
   if (cached && Date.now() - cached.t < 5 * 60 * 1000) return cached.pool;
 
   const season = new Date().getFullYear();
 
-  // Fetch top 400 hitters by HR
-  const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=400&hydrate=person,team`;
+  // Fetch top 400 hitters by HR — hydrate person with primaryPosition
+  const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=400&hydrate=person(primaryPosition),team`;
   const hrResp = await fetch(hrUrl);
   if (!hrResp.ok) throw new Error(`MLB leaders ${hrResp.status}`);
   const hrData = await hrResp.json();
   const leaders = hrData?.leagueLeaders?.[0]?.leaders || [];
 
-  // Fetch injury/roster status
+  // Fetch full player roster with positions as a reliable fallback.
+  // The leaders endpoint sometimes returns blank position for some players.
+  let posMap = {};
+  try {
+    const rosterUrl = `https://statsapi.mlb.com/api/v1/sports/1/players?season=${season}&gameType=R&fields=people,id,primaryPosition,abbreviation`;
+    const rosterResp = await fetch(rosterUrl);
+    if (rosterResp.ok) {
+      const rosterData = await rosterResp.json();
+      for (const p of (rosterData.people || [])) {
+        if (p.id && p.primaryPosition?.abbreviation) {
+          posMap[p.id] = p.primaryPosition.abbreviation;
+        }
+      }
+    }
+  } catch {}
+
+  // Fetch injury/roster status from the same endpoint
   let injuryMap = {};
   try {
-    const ilUrl = `https://statsapi.mlb.com/api/v1/sports/1/players?season=${season}&gameType=R&fields=people,id,fullName,status`;
+    const ilUrl = `https://statsapi.mlb.com/api/v1/sports/1/players?season=${season}&gameType=R&fields=people,id,status,code`;
     const ilResp = await fetch(ilUrl);
     if (ilResp.ok) {
       const ilData = await ilResp.json();
@@ -96,15 +109,24 @@ async function fetchPlayerPool() {
     if (statusCode.startsWith('D') || statusCode === 'DL') health = 'IL';
     else if (statusCode !== 'A') health = statusCode;
 
+    // Position resolution — try 3 sources in order of reliability:
+    // 1. Full player roster endpoint (most reliable)
+    // 2. Leader entry position field
+    // 3. Person primaryPosition from hydration
+    const pos = (id && posMap[id])
+      || l?.position?.abbreviation
+      || l?.person?.primaryPosition?.abbreviation
+      || '?';
+
     return {
       id,
-      name:    l?.person?.fullName || '',
-      team:    TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
-      pos:     l?.position?.abbreviation || l?.person?.primaryPosition?.abbreviation || '?',
-      hr:      parseInt(l?.value) || 0,
-      prevHR:  0,   // overlaid from league roster data in GET handler
+      name:   l?.person?.fullName || '',
+      team:   TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
+      pos,
+      hr:     parseInt(l?.value) || 0,
+      prevHR: 0,
       health,
-      rank:    l?.rank || 0,
+      rank:   l?.rank || 0,
     };
   }).filter(p => p.name);
 
