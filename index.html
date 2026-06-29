@@ -2020,6 +2020,11 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
     if (_draftSort === 'prevHR') return b.prevHR - a.prevHR;
     return b.hr - a.hr;
   });
+
+  // Store filtered pool on window so onclick handlers can reference by index
+  // This avoids JSON serialization issues with special chars in player names
+  window._draftFilteredPool = filtered;
+
   if (!filtered.length) return `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-faint)">No players match your filters</td></tr>`;
   return filtered.slice(0, 150).map((p, i) => {
     const drafted = p.drafted;
@@ -2037,7 +2042,7 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
         ${drafted
           ? `<span style="font-size:10px;color:var(--text-faint)">${escapeHtml(p.draftedBy || '✓')}</span>`
           : isMyTurn
-            ? `<button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:11px" onclick="makeDraftPick('${escapeAttr(leagueId)}',${JSON.stringify(p).replace(/'/g, "&#39;")})">Draft</button>`
+            ? `<button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:11px" onclick="makeDraftPickByIndex(${i})">Draft</button>`
             : `<button class="btn btn-sm btn-ghost" style="padding:3px 10px;font-size:11px" disabled>Draft</button>`
         }
       </td>
@@ -2178,6 +2183,14 @@ async function submitOpenDraft(leagueId) {
   } catch (e) {
     err.textContent = 'Connection failed';
   }
+}
+
+// Called by the Draft button — reads player from window._draftFilteredPool
+// by index so we never have to serialize a player object into an onclick attribute.
+async function makeDraftPickByIndex(idx) {
+  const player = window._draftFilteredPool?.[idx];
+  if (!player) { alert('Player not found — try refreshing the draft board.'); return; }
+  await makeDraftPick(CURRENT_LEAGUE.league.id, player);
 }
 
 async function makeDraftPick(leagueId, player) {
