@@ -60,14 +60,18 @@ export function positionsValid(positions, rule) {
 // Pool is cached in Netlify Blobs for 5 minutes.
 async function fetchPlayerPool() {
   const store = getStore('league');
-  const cacheKey = `playerPool-v4`;
+  // v5 — fixes health status which was previously reading the 40-man roster
+  // endpoint (always reports Active regardless of real IL status). Now uses
+  // the person-detail endpoint hydrated with rosterEntries, which correctly
+  // reflects real-time IL placements.
+  const cacheKey = `playerPool-v6`;
   const cached = await store.get(cacheKey, { type: 'json' });
   if (cached && Date.now() - cached.t < 5 * 60 * 1000) return cached.pool;
 
   const season = new Date().getFullYear();
 
   // Fetch top 400 hitters by HR — hydrate person with primaryPosition
-  const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=400&hydrate=person(primaryPosition),team`;
+  const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=500&hydrate=person(primaryPosition),team`;
   const hrResp = await fetch(hrUrl);
   if (!hrResp.ok) throw new Error(`MLB leaders ${hrResp.status}`);
   const hrData = await hrResp.json();
@@ -89,24 +93,42 @@ async function fetchPlayerPool() {
     }
   } catch {}
 
-  // Fetch injury/roster status from the same endpoint
+  // Fetch real injury status per-team via the team roster endpoint with
+  // rosterType=40Man, which DOES correctly reflect IL placements (unlike
+  // /sports/1/players which only reports the static 40-man membership and
+  // doesn't update when a player goes on the IL). We batch by team to keep
+  // this fast — only fetching teams that have at least one player in our
+  // top-400 leaders list.
   let injuryMap = {};
   try {
-    const ilUrl = `https://statsapi.mlb.com/api/v1/sports/1/players?season=${season}&gameType=R&fields=people,id,status,code`;
-    const ilResp = await fetch(ilUrl);
-    if (ilResp.ok) {
-      const ilData = await ilResp.json();
-      for (const p of (ilData.people || [])) {
-        injuryMap[p.id] = p.status?.code || 'A';
-      }
+    const teamIds = [...new Set(leaders.map(l => l?.team?.id).filter(Boolean))];
+    const batchSize = 10;
+    for (let i = 0; i < teamIds.length; i += batchSize) {
+      const batch = teamIds.slice(i, i + batchSize);
+      await Promise.all(batch.map(async (teamId) => {
+        try {
+          // rosterType=40Man includes status (Active/IL-10/IL-15/IL-60/etc.)
+          const teamRosterUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=40Man&season=${season}`;
+          const resp = await fetch(teamRosterUrl);
+          if (!resp.ok) return;
+          const data = await resp.json();
+          for (const entry of (data.roster || [])) {
+            const id = entry?.person?.id;
+            const statusCode = entry?.status?.code; // 'A' active, 'D10'/'D15'/'D60' IL, 'RM' restricted, etc.
+            if (id && statusCode) injuryMap[id] = statusCode;
+          }
+        } catch {}
+      }));
     }
-  } catch {}
+  } catch (e) {
+    console.warn('Injury status batch fetch failed:', e.message);
+  }
 
   const pool = leaders.map(l => {
     const id = l?.person?.id;
     const statusCode = id ? (injuryMap[id] || 'A') : 'A';
     let health = 'Active';
-    if (statusCode.startsWith('D') || statusCode === 'DL') health = 'IL';
+    if (statusCode.startsWith('D') || statusCode === 'DL' || statusCode === 'IL') health = 'IL';
     else if (statusCode !== 'A') health = statusCode;
 
     // Position resolution — try 3 sources in order of reliability:
@@ -232,31 +254,38 @@ export default async (req) => {
     const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
     const basedOn = league.draft?.basedOn || (keys.length ? keys[keys.length - 1] : null);
 
-    // Build a name → HR map from the league's own stored roster data for basedOn month.
-    // This is fast, accurate, and already correct — no MLB API call needed.
-    // Only covers players currently on rosters, but that's exactly who needs accurate
-    // prev-month numbers for draft context. Everyone else shows 0 or — which is fine.
-    const prevMonthRosterHR = {};
-    if (basedOn && league.months?.[basedOn]) {
-      for (const mgr of (league.managers || [])) {
-        for (const slot of (league.months[basedOn].rosters?.[mgr] || [])) {
-          if (slot.player) {
-            const nk = normName(slot.player);
-            prevMonthRosterHR[nk] = (prevMonthRosterHR[nk] || 0) + (parseInt(slot.hr) || 0);
+    // ── FAST PATH: stateOnly=true ──
+    // Used by polling and post-pick refreshes, which only need updated picks,
+    // turn order, and roster info — NOT the full 400-player pool (which
+    // requires several MLB API calls and is the slow part of this endpoint).
+    // The pool barely changes minute to minute, so the frontend fetches it
+    // once on initial load and merges fresh draft state into it locally.
+    // This is what makes picks and polling feel instant instead of laggy.
+    const stateOnly = url.searchParams.get('stateOnly') === 'true';
+
+    let pool = [], poolError = null;
+    if (!stateOnly) {
+      try { pool = await fetchPlayerPool(); }
+      catch (e) { poolError = e.message; }
+
+      // Build a name → HR map from the league's own stored roster data for
+      // basedOn month. Fast, accurate, no extra API call needed.
+      const prevMonthRosterHR = {};
+      if (basedOn && league.months?.[basedOn]) {
+        for (const mgr of (league.managers || [])) {
+          for (const slot of (league.months[basedOn].rosters?.[mgr] || [])) {
+            if (slot.player) {
+              const nk = normName(slot.player);
+              prevMonthRosterHR[nk] = (prevMonthRosterHR[nk] || 0) + (parseInt(slot.hr) || 0);
+            }
           }
         }
       }
+      pool = pool.map(p => ({
+        ...p,
+        prevHR: prevMonthRosterHR[normName(p.name)] ?? p.prevHR ?? 0,
+      }));
     }
-
-    let pool = [], poolError = null;
-    try { pool = await fetchPlayerPool(); }
-    catch (e) { poolError = e.message; }
-
-    // Overlay prev month HRs from league data onto the pool
-    pool = pool.map(p => ({
-      ...p,
-      prevHR: prevMonthRosterHR[normName(p.name)] ?? p.prevHR ?? 0,
-    }));
 
     const d = league.draft;
     const picks = d?.picks || [];
@@ -272,22 +301,25 @@ export default async (req) => {
       }
     }
 
-    const poolWithStatus = pool.map(p => {
-      const isPlayerDrafted = takenNorms.includes(normName(p.name));
-      const isTeamTaken     = takenTeams.has(p.team);
-      const draftedBy = isPlayerDrafted
-        ? (picks.find(pk => normName(pk.player) === normName(p.name))?.mgr || null)
-        : isTeamTaken
-          ? (picks.find(pk => pk.team === p.team && !pk.skipped)?.mgr || null)
-          : null;
+    // drafted/draftedBy/teamTaken status — sent separately as a lightweight
+    // lookup keyed by normalized player name, so the frontend can overlay
+    // it onto the already-fetched pool without needing the pool re-sent.
+    const draftStatusByName = {};
+    for (const norm of takenNorms) draftStatusByName[norm] = true;
 
-      return {
-        ...p,
-        drafted:      isPlayerDrafted || isTeamTaken,
-        draftedBy,
-        teamTaken:    isTeamTaken && !isPlayerDrafted, // team taken but not this specific player
-      };
-    });
+    let pool2 = pool;
+    if (!stateOnly) {
+      pool2 = pool.map(p => {
+        const isPlayerDrafted = takenNorms.includes(normName(p.name));
+        const isTeamTaken     = takenTeams.has(p.team);
+        const draftedBy = isPlayerDrafted
+          ? (picks.find(pk => normName(pk.player) === normName(p.name))?.mgr || null)
+          : isTeamTaken
+            ? (picks.find(pk => pk.team === p.team && !pk.skipped)?.mgr || null)
+            : null;
+        return { ...p, drafted: isPlayerDrafted || isTeamTaken, draftedBy, teamTaken: isTeamTaken && !isPlayerDrafted };
+      });
+    }
 
     // Build per-manager roster view for the draft
     const rosterViews = {};
@@ -302,8 +334,13 @@ export default async (req) => {
     return Response.json({
       ok: true,
       ...draftView(league, session),
-      pool: poolWithStatus,
-      poolError,
+      // Pool is omitted entirely on stateOnly requests — frontend already has
+      // it from the initial load and merges fresh status via draftStatusByName.
+      ...(stateOnly ? {} : { pool: pool2, poolError }),
+      draftStatusByName,        // { normalizedPlayerName: true } for anyone drafted
+      draftedTeamToManager: Object.fromEntries(
+        [...takenTeams].map(team => [team, picks.find(pk => pk.team === team && !pk.skipped)?.mgr || null])
+      ),
       rosterViews,
       mgrPosCounts,
       takenTeams: [...takenTeams],

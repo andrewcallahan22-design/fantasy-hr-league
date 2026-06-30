@@ -1752,21 +1752,68 @@ let _draftSort = 'hr'; // 'hr' | 'prevHR' | 'name'
 let _draftRosterMgr = null;
 let _draftPollTimer = null;
 
+// Looks up who drafted a given player name from the draft's picks array.
+// Used to fill in draftedBy for the lightweight stateOnly responses, which
+// don't re-send the full pool but do include draft.picks.
+function findDraftedByName(draftResponse, playerName) {
+  const norm = normName(playerName);
+  const pick = (draftResponse.draft?.picks || []).find(p => normName(p.player) === norm);
+  return pick?.mgr || null;
+}
+
 async function renderDraft(body) {
   if (!SESSION) {
     body.innerHTML = `<div class="notice info">Sign in to access the draft room.</div>`;
     return;
   }
   body.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted)">Loading draft room…</div>`;
-  await loadDraftState(body);
+  // Reset cached pool when entering the draft tab fresh
+  window._draftFullPool = null;
+  await loadDraftState(body, { fullPool: true });
 }
 
-async function loadDraftState(body) {
+// Loads draft state from the server.
+// fullPool=true (initial load): fetches the complete 400-player pool with
+//   health/HR data — this is the slow call (~1-2s, several MLB API requests).
+// fullPool=false (default, used by polling/post-pick refresh): lightweight
+//   stateOnly fetch that only returns picks/turn-order/roster data — no MLB
+//   API calls at all server-side, just reads from the league blob. This is
+//   what makes taking a pick feel instant instead of laggy.
+async function loadDraftState(body, { fullPool = false } = {}) {
   const leagueId = CURRENT_LEAGUE.league.id;
   try {
-    const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}`, { headers: authHeaders(), cache: 'no-store' });
-    _draft = await r.json();
-    if (!_draft.ok) throw new Error(_draft.error || 'Failed to load draft');
+    const stateOnlyParam = fullPool ? '' : '&stateOnly=true';
+    const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}${stateOnlyParam}`, { headers: authHeaders(), cache: 'no-store' });
+    const fresh = await r.json();
+    if (!fresh.ok) throw new Error(fresh.error || 'Failed to load draft');
+
+    if (fullPool && fresh.pool) {
+      // Cache the full pool client-side — we won't re-fetch it on every poll
+      window._draftFullPool = fresh.pool;
+    }
+
+    // Merge: use the cached full pool, but overlay fresh drafted/team-taken
+    // status from this response so availability is always current even
+    // though we're not re-fetching the whole pool every time.
+    const basePool = window._draftFullPool || fresh.pool || [];
+    const mergedPool = basePool.map(p => {
+      const norm = normName(p.name);
+      const isPlayerDrafted = !!fresh.draftStatusByName?.[norm];
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team);
+      const draftedBy = isPlayerDrafted
+        ? null // will be filled below from picks if needed
+        : isTeamTaken
+          ? (fresh.draftedTeamToManager?.[p.team] || null)
+          : null;
+      return {
+        ...p,
+        drafted: isPlayerDrafted || isTeamTaken,
+        draftedBy: isPlayerDrafted ? findDraftedByName(fresh, p.name) : draftedBy,
+        teamTaken: isTeamTaken && !isPlayerDrafted,
+      };
+    });
+
+    _draft = { ...fresh, pool: mergedPool };
     if (!_draftRosterMgr) _draftRosterMgr = _draft.me || CURRENT_LEAGUE.league.managers[0];
     renderDraftRoom(body || document.getElementById('tab-body'));
     startDraftPolling();
@@ -1783,12 +1830,31 @@ function startDraftPolling() {
     if (document.hidden || CURRENT_TAB !== 'draft') return;
     const leagueId = CURRENT_LEAGUE.league.id;
     try {
-      const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}`, { headers: authHeaders(), cache: 'no-store' });
+      // stateOnly=true skips the slow ~1-2s MLB pool fetch entirely — polling
+      // only needs picks/turn-order, which is a single fast blob read.
+      const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}&stateOnly=true`, { headers: authHeaders(), cache: 'no-store' });
       const fresh = await r.json();
       if (!fresh.ok) return;
       const prevPickCount = _draft?.draft?.picks?.length || 0;
       const newPickCount  = fresh?.draft?.picks?.length  || 0;
-      _draft = fresh;
+
+      // Merge fresh drafted/team-taken status onto the already-cached full
+      // pool — we never re-fetch the 400-player pool on poll, just overlay
+      // current availability onto what we already have.
+      const basePool = window._draftFullPool || _draft.pool || [];
+      const mergedPool = basePool.map(p => {
+        const norm = normName(p.name);
+        const isPlayerDrafted = !!fresh.draftStatusByName?.[norm];
+        const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team);
+        return {
+          ...p,
+          drafted: isPlayerDrafted || isTeamTaken,
+          draftedBy: isPlayerDrafted ? findDraftedByName(fresh, p.name) : (isTeamTaken ? (fresh.draftedTeamToManager?.[p.team] || null) : null),
+          teamTaken: isTeamTaken && !isPlayerDrafted,
+        };
+      });
+      _draft = { ...fresh, pool: mergedPool };
+
       if (newPickCount !== prevPickCount) {
         // If the user is actively typing in search, skip this render entirely
         // and let the next poll (or their next keystroke) pick up fresh data.
@@ -1801,13 +1867,13 @@ function startDraftPolling() {
         // Preserve the player pool's scroll position across the re-render —
         // without this, every new pick from any manager would yank the page
         // back to the top mid-browse, which is exactly what was happening.
-        const poolContainer = document.querySelector('.panel-body[style*="overflow-y"]');
+        const poolContainer = document.getElementById('draft-pool-scroll-container');
         const savedScrollTop = poolContainer?.scrollTop || 0;
 
         renderDraftRoom(document.getElementById('tab-body'));
 
         requestAnimationFrame(() => {
-          const newPoolContainer = document.querySelector('.panel-body[style*="overflow-y"]');
+          const newPoolContainer = document.getElementById('draft-pool-scroll-container');
           if (newPoolContainer) newPoolContainer.scrollTop = savedScrollTop;
         });
       }
@@ -1915,9 +1981,31 @@ function renderDraftRoom(body) {
   const rounds = d.draft.rounds || league.settings?.rosterSize || 6;
 
   body.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start" id="draft-grid">
+    <div style="display:grid;grid-template-columns:240px 1fr 280px;gap:14px;align-items:start" id="draft-grid">
 
-      <!-- LEFT: Draft board -->
+      <!-- LEFT: Recent picks (sticky, always visible, no scrolling needed) -->
+      <div style="position:sticky;top:80px">
+        <div class="panel" style="margin:0">
+          <div class="panel-header">Recent Picks</div>
+          <div class="panel-body" style="padding:0;max-height:calc(100vh - 160px);overflow-y:auto">
+            ${picks.length ? [...picks].reverse().slice(0, 30).map((p, i) => `
+              <div style="padding:8px 12px;border-bottom:1px dashed var(--panel-border);${i === 0 ? 'background:rgba(240,199,94,0.05)' : ''}">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+                  <span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-faint)">#${picks.length - i}</span>
+                  <span style="font-weight:${i === 0 ? '600' : '500'};color:var(--text);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${escapeHtml(p.player)}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                  <span class="team-chip" style="font-size:9px">${escapeHtml(p.team)}</span>
+                  <span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos)}</span>
+                  <span style="font-size:10px;color:var(--text-muted)">${escapeHtml(p.mgr)}</span>
+                </div>
+              </div>
+            `).join('') : `<div style="padding:20px 12px;text-align:center;color:var(--text-faint);font-size:12px;font-style:italic">No picks yet</div>`}
+          </div>
+        </div>
+      </div>
+
+      <!-- CENTER: Draft board (primary focus) -->
       <div>
         <!-- On-clock banner -->
         <div style="background:${onClock === myMgr ? 'rgba(240,199,94,0.12)' : 'rgba(13,22,41,0.85)'};border:1px solid ${onClock === myMgr ? 'rgba(240,199,94,0.4)' : 'var(--panel-border)'};border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -1935,11 +2023,6 @@ function renderDraftRoom(body) {
           </div>
         </div>
 
-        ${isCommish && picks.length > 0 ? `
-          <div style="font-size:11px;color:var(--text-faint);margin:-8px 0 12px 2px">
-            Last pick: <strong style="color:var(--text-muted)">${escapeHtml(picks[picks.length-1].player)}</strong> by ${escapeHtml(picks[picks.length-1].mgr)} — use "Undo last pick" above to reverse it
-          </div>
-        ` : ''}
         <!-- Filters -->
         <div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:2;min-width:160px">
@@ -1977,7 +2060,7 @@ function renderDraftRoom(body) {
 
         <!-- Player pool table -->
         <div class="panel">
-          <div class="panel-body" style="padding:0;overflow-x:auto;max-height:60vh;overflow-y:auto">
+          <div class="panel-body" id="draft-pool-scroll-container" style="padding:0;overflow-x:auto;max-height:calc(100vh - 280px);overflow-y:auto">
             <table class="data-table" style="min-width:500px">
               <thead style="position:sticky;top:0;z-index:2;background:var(--panel-solid)">
                 <tr>
@@ -1997,29 +2080,11 @@ function renderDraftRoom(body) {
             </table>
           </div>
         </div>
-
-        <!-- Recent picks log -->
-        ${picks.length ? `
-          <div class="panel" style="margin-top:12px">
-            <div class="panel-header">Recent picks</div>
-            <div class="panel-body" style="padding:0;max-height:200px;overflow-y:auto">
-              ${[...picks].reverse().slice(0, 20).map((p, i) => `
-                <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px dashed var(--panel-border);${i === 0 ? 'background:rgba(240,199,94,0.04)' : ''}">
-                  <span style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:28px">#${picks.length - i}</span>
-                  <span style="flex:1;font-weight:${i === 0 ? '600' : '400'};color:var(--text)">${escapeHtml(p.player)}</span>
-                  <span class="team-chip" style="font-size:10px">${escapeHtml(p.team)}</span>
-                  <span class="pos-chip" style="font-size:10px">${escapeHtml(p.pos)}</span>
-                  <span style="font-size:12px;color:var(--text-muted)">${escapeHtml(p.mgr)}</span>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
       </div>
 
       <!-- RIGHT: Roster panel -->
       <div style="position:sticky;top:80px">
-        <div class="panel">
+        <div class="panel" style="margin:0">
           <div class="panel-header" style="flex-direction:column;gap:8px;align-items:flex-start">
             <span>Roster</span>
             <div style="display:flex;gap:4px;flex-wrap:wrap">
@@ -2030,7 +2095,7 @@ function renderDraftRoom(body) {
               `).join('')}
             </div>
           </div>
-          <div class="panel-body" style="padding:10px">
+          <div class="panel-body" style="padding:10px;max-height:calc(100vh - 200px);overflow-y:auto">
             ${renderRosterPanel(rosterSlots, rounds, filledPositions, league.settings)}
           </div>
         </div>
@@ -2038,8 +2103,15 @@ function renderDraftRoom(body) {
     </div>
 
     <style>
+      @media (max-width: 1024px) {
+        #draft-grid { grid-template-columns: 1fr 280px !important; }
+        #draft-grid > div:first-child { display: none; } /* hide recent picks column on tablet, board+roster only */
+      }
       @media (max-width: 760px) {
         #draft-grid { grid-template-columns: 1fr !important; }
+        #draft-grid > div:first-child { display: block !important; order: 3; } /* recent picks moves below board on mobile */
+        #draft-grid > div:nth-child(3) { order: 2; } /* roster after board on mobile */
+        #draft-grid > div:nth-child(2) { order: 1; } /* board first on mobile */
       }
     </style>
   `;
@@ -2089,7 +2161,7 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
     </td></tr>`;
   }
 
-  return filtered.slice(0, 150).map((p, i) => {
+  return filtered.slice(0, 300).map((p, i) => {
     const isDrafted    = p.drafted;
     const isTeamTaken  = p.teamTaken; // team taken by someone, not this specific player
     const unavailable  = isDrafted;
@@ -2298,7 +2370,8 @@ async function submitOpenDraft(leagueId) {
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Failed to open draft'; return; }
-    await loadDraftState(document.getElementById('tab-body'));
+    window._draftFullPool = null; // clear any stale pool from a prior closed draft
+    await loadDraftState(document.getElementById('tab-body'), { fullPool: true });
   } catch (e) {
     err.textContent = 'Connection failed';
   }
