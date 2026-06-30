@@ -175,3 +175,49 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
   console.log(`[notify:${league.id}] ${sent}/${totalAttempts} delivered, ${deadEndpoints.size} dead subs pruned, ${queue.length} distinct events queued`);
   return { sent, dead: deadEndpoints.size };
 }
+
+// ── DRAFT TURN NOTIFICATION ──
+// Notifies the manager whose pick is up. Fires once per pick (tag includes
+// pick number, so the same turn never double-notifies even if called twice).
+// Quiet hours still apply — a draft turn at 2am won't buzz anyone's phone.
+export async function dispatchDraftTurnNotification({ league, onClockManager, pickNumber, round, totalPicks }) {
+  if (inQuietHours()) {
+    console.log(`[draft-notify:${league.id}] Quiet hours — suppressed`);
+    return { sent: 0, suppressed: true };
+  }
+
+  const email = emailForManager(league, onClockManager);
+  if (!email) return { sent: 0, reason: 'no email linked for ' + onClockManager };
+
+  const allSubs = await loadSubs();
+  const subs = allSubs[email] || [];
+  if (!subs.length) return { sent: 0, reason: 'no push subscriptions' };
+
+  // Tag includes pick number — guarantees one notification per turn, no
+  // matter how many times this function gets called for the same pick.
+  const tag = `draft-turn-${league.id}-pick${pickNumber}`;
+  const payload = JSON.stringify({
+    title: `🏈 You're on the clock!`,
+    body: `Round ${round} · Pick ${pickNumber} of ${totalPicks} · ${league.name}`,
+    tag,
+    url: `/league/${league.id}/draft`,
+  });
+
+  let sent = 0;
+  const deadEndpoints = new Set();
+  for (const sub of subs) {
+    try {
+      const res = await sendPush(sub, payload, { ttl: 3600, urgency: 'high' });
+      if (res.ok) sent++;
+      else if (res.status === 404 || res.status === 410) deadEndpoints.add(sub.endpoint);
+    } catch (e) {
+      console.warn(`[draft-notify:${league.id}] Push failed:`, e.message);
+    }
+  }
+  if (deadEndpoints.size) {
+    allSubs[email] = subs.filter(s => !deadEndpoints.has(s.endpoint));
+    await saveSubs(allSubs);
+  }
+  console.log(`[draft-notify:${league.id}] Notified ${onClockManager} (${email}) — ${sent} device(s)`);
+  return { sent };
+}

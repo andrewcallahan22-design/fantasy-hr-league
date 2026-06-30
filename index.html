@@ -1182,8 +1182,21 @@ function startLeaguePolling() {
   if (_pollTimer) clearInterval(_pollTimer);
   _pollTimer = setInterval(async () => {
     if (!CURRENT_LEAGUE || document.hidden) return;
+    // Settings/Commissioner tabs contain dropdowns and form fields the user
+    // may be actively editing. A background poll mid-edit was silently
+    // overwriting unsaved selections (selects aren't caught by the input-type
+    // check below since their el.type is 'select-one', not 'text'/'number').
+    // Settings data isn't time-sensitive like scores/draft picks, so it's
+    // safe to simply not poll while the user is on either settings tab.
+    //
+    // Draft tab is ALSO excluded here — it has its own dedicated 8-second
+    // poller (startDraftPolling) that preserves scroll position and skips
+    // re-rendering while the user is searching. Without this exclusion, BOTH
+    // pollers were firing on overlapping schedules (15s + 8s), which is what
+    // caused the page to visibly jump back to the top roughly every ~10s.
+    if (CURRENT_TAB === 'settings' || CURRENT_TAB === 'my-settings' || CURRENT_TAB === 'draft') return;
     const el = document.activeElement;
-    if (el && el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'number')) return;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) return;
     await _fetchAndRenderLeague();
   }, 15000);
 
@@ -1916,11 +1929,17 @@ function renderDraftRoom(body) {
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <div style="font-family:'Roboto Mono',monospace;font-size:12px;color:var(--text-muted)">${pctDone}% done</div>
+            ${isCommish && picks.length > 0 ? `<button class="btn btn-sm btn-ghost" onclick="undoLastDraftPick('${escapeAttr(league.id)}')" title="Reverses ${escapeAttr(picks[picks.length-1]?.player || '')}, ${escapeAttr(picks[picks.length-1]?.mgr || '')}'s last pick">↩ Undo last pick</button>` : ''}
             ${isCommish && onClock !== myMgr ? `<button class="btn btn-sm btn-ghost" onclick="skipDraftPick('${escapeAttr(league.id)}')">Skip ${escapeHtml(onClock)}</button>` : ''}
             ${isCommish ? `<button class="btn btn-sm btn-danger" onclick="resetDraft('${escapeAttr(league.id)}')">Close draft</button>` : ''}
           </div>
         </div>
 
+        ${isCommish && picks.length > 0 ? `
+          <div style="font-size:11px;color:var(--text-faint);margin:-8px 0 12px 2px">
+            Last pick: <strong style="color:var(--text-muted)">${escapeHtml(picks[picks.length-1].player)}</strong> by ${escapeHtml(picks[picks.length-1].mgr)} — use "Undo last pick" above to reverse it
+          </div>
+        ` : ''}
         <!-- Filters -->
         <div style="background:var(--panel);border:1px solid var(--panel-border);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:2;min-width:160px">
@@ -2338,6 +2357,22 @@ async function makeDraftPick(leagueId, player) {
   } catch (e) {
     alert('Connection failed — try again');
   }
+}
+
+async function undoLastDraftPick(leagueId) {
+  const lastPick = _draft?.draft?.picks?.[_draft.draft.picks.length - 1];
+  const confirmMsg = lastPick
+    ? `Undo ${lastPick.mgr}'s pick of ${lastPick.player}? They'll need to pick again.`
+    : 'Undo the last pick?';
+  if (!confirm(confirmMsg)) return;
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'undo', leagueId }),
+  });
+  const res = await r.json();
+  if (!res.ok) { alert(res.error || 'Undo failed'); return; }
+  await loadDraftState(document.getElementById('tab-body'));
 }
 
 async function skipDraftPick(leagueId) {

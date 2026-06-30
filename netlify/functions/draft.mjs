@@ -361,6 +361,22 @@ export default async (req) => {
       createdAt: Date.now(), openedBy: session.email,
     };
     await saveLeague(league);
+
+    // Notify the very first manager on the clock — otherwise they'd have no
+    // idea the draft started until someone tells them.
+    try {
+      const { dispatchDraftTurnNotification } = await import('./lib/notify.mjs');
+      await dispatchDraftTurnNotification({
+        league,
+        onClockManager: fullOrder[0],
+        pickNumber: 1,
+        round: 1,
+        totalPicks: fullOrder.length,
+      });
+    } catch (e) {
+      console.warn('Draft-open notification failed (non-fatal):', e.message);
+    }
+
     return Response.json({ ok: true, ...draftView(league, session) });
   }
 
@@ -409,6 +425,7 @@ export default async (req) => {
 
     // Draft complete when all picks are done
     const totalPicks = d.fullOrder ? d.fullOrder.length : d.order.length * d.rounds;
+    let draftJustCompleted = false;
     if (d.picks.length >= totalPicks) {
       // Auto-populate the new month's rosters
       const rosters = {};
@@ -426,8 +443,30 @@ export default async (req) => {
       league.currentMonth = d.month;
       d.status = 'complete';
       d.completedAt = Date.now();
+      draftJustCompleted = true;
     }
     await saveLeague(league);
+
+    // Notify whoever is now on the clock — fire and forget, never blocks the
+    // pick response. Only fires if the draft is still active (not if this
+    // pick just completed the draft).
+    if (!draftJustCompleted) {
+      const nextPickIdx = d.picks.length;
+      const nextOnClock = d.fullOrder ? d.fullOrder[nextPickIdx] : d.order[nextPickIdx % d.order.length];
+      const nextRound = Math.floor(nextPickIdx / d.order.length) + 1;
+      try {
+        const { dispatchDraftTurnNotification } = await import('./lib/notify.mjs');
+        await dispatchDraftTurnNotification({
+          league,
+          onClockManager: nextOnClock,
+          pickNumber: nextPickIdx + 1,
+          round: nextRound,
+          totalPicks,
+        });
+      } catch (e) {
+        console.warn('Draft turn notification failed (non-fatal):', e.message);
+      }
+    }
     return Response.json({ ok: true, ...draftView(league, session) });
   }
 
