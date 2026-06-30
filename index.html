@@ -1777,7 +1777,26 @@ function startDraftPolling() {
       const newPickCount  = fresh?.draft?.picks?.length  || 0;
       _draft = fresh;
       if (newPickCount !== prevPickCount) {
+        // If the user is actively typing in search, skip this render entirely
+        // and let the next poll (or their next keystroke) pick up fresh data.
+        // Yanking the table away mid-search is worse than being 8s stale.
+        const searchInput = document.getElementById('draft-search');
+        if (document.activeElement === searchInput && searchInput.value) {
+          return;
+        }
+
+        // Preserve the player pool's scroll position across the re-render —
+        // without this, every new pick from any manager would yank the page
+        // back to the top mid-browse, which is exactly what was happening.
+        const poolContainer = document.querySelector('.panel-body[style*="overflow-y"]');
+        const savedScrollTop = poolContainer?.scrollTop || 0;
+
         renderDraftRoom(document.getElementById('tab-body'));
+
+        requestAnimationFrame(() => {
+          const newPoolContainer = document.querySelector('.panel-body[style*="overflow-y"]');
+          if (newPoolContainer) newPoolContainer.scrollTop = savedScrollTop;
+        });
       }
     } catch {}
   }, 8000);
@@ -2026,19 +2045,47 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
     return b.hr - a.hr;
   });
 
+  // Merge in live search results if we have any (appended after pool matches,
+  // deduped by name so a player already in the pool isn't shown twice)
+  if (search.length >= 2 && window._draftLiveSearchResults?.length) {
+    const poolNames = new Set(filtered.map(p => normName(p.name)));
+    const extra = window._draftLiveSearchResults.filter(p => !poolNames.has(normName(p.name)));
+    filtered = [...filtered, ...extra];
+  }
+
   // Store filtered pool on window so onclick handlers can reference by index
   window._draftFilteredPool = filtered;
 
-  if (!filtered.length) return `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-faint)">No players match your filters</td></tr>`;
+  // If local pool search is empty/sparse and we haven't searched live yet for
+  // this query, trigger a live MLB search. This catches players outside the
+  // top-400 pool (e.g. lower-power hitters like catchers).
+  if (search.length >= 2 && filtered.length < 5 && window._draftLastLiveSearchQuery !== search) {
+    window._draftLastLiveSearchQuery = search;
+    triggerLiveDraftSearch(search);
+  }
+
+  if (!filtered.length) {
+    return `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-faint)">
+      ${search.length >= 2 ? 'Searching MLB for more players…' : 'No players match your filters'}
+    </td></tr>`;
+  }
 
   return filtered.slice(0, 150).map((p, i) => {
     const isDrafted    = p.drafted;
     const isTeamTaken  = p.teamTaken; // team taken by someone, not this specific player
     const unavailable  = isDrafted;
 
-    // Check if this position would violate the on-clock manager's position rule
+    // Check if this position would violate the on-clock manager's position rule.
+    // Reads the ACTUAL league setting rather than assuming "max 2":
+    //   all-unique          → max 1 of any position
+    //   one-duplicate-allowed → max 2 of any position
+    //   unrestricted        → no limit, never blocked
     const posCount = onClockPosCounts[p.pos] || 0;
-    const posBlocked = isMyTurn && posCount >= 2; // max 2 of any position
+    const positionRule = _draft?.positionRule || 'one-duplicate-allowed';
+    const maxAllowed = positionRule === 'all-unique' ? 1
+      : positionRule === 'unrestricted' ? Infinity
+      : 2; // one-duplicate-allowed
+    const posBlocked = isMyTurn && p.pos !== '?' && posCount >= maxAllowed;
 
     const rowStyle = unavailable ? 'opacity:0.35;' : posBlocked ? 'opacity:0.6;' : '';
     const healthColor = p.health === 'Active' ? 'var(--green)' : p.health === 'IL' ? 'var(--red)' : 'var(--orange)';
@@ -2112,10 +2159,16 @@ function renderRosterPanel(slots, rounds, filledPositions, settings) {
         <div style="display:flex;flex-wrap:wrap;gap:4px">
           ${posAllowed.map(pos => {
             const count = posCounts[pos] || 0;
-            // Rule: max 2 of any one position. At 2 = crossed out (can't pick again).
-            const maxed  = count >= 2;
-            const used   = count === 1;
-            const unused = count === 0;
+            // Read the ACTUAL league position rule rather than assuming "max 2":
+            //   all-unique            → max 1 of any position
+            //   one-duplicate-allowed → max 2 of any position
+            //   unrestricted          → no limit
+            const posRule = settings?.positionRule || 'one-duplicate-allowed';
+            const maxAllowed = posRule === 'all-unique' ? 1
+              : posRule === 'unrestricted' ? Infinity
+              : 2;
+            const maxed  = count >= maxAllowed;
+            const used   = count > 0 && !maxed;
             let bg, color, decoration;
             if (maxed) {
               bg = 'rgba(239,68,68,0.15)'; color = 'var(--red)'; decoration = 'line-through';
@@ -2133,8 +2186,10 @@ function renderRosterPanel(slots, rounds, filledPositions, settings) {
         </div>
         <div style="margin-top:6px;font-size:10px;color:var(--text-faint)">
           <span style="color:var(--text-faint)">□ unused</span>
-          <span style="color:var(--orange);margin-left:8px">×1 used once</span>
-          <span style="color:var(--red);text-decoration:line-through;margin-left:8px">×2 maxed</span>
+          ${(settings?.positionRule || 'one-duplicate-allowed') !== 'all-unique'
+            ? '<span style="color:var(--orange);margin-left:8px">used once</span>'
+            : ''}
+          <span style="color:var(--red);text-decoration:line-through;margin-left:8px">maxed — can't pick again</span>
         </div>
       </div>
     ` : ''}
@@ -2177,6 +2232,10 @@ function renderDraftLog(draft, managers) {
 // ── Draft actions ──
 function setDraftFilter(key, value) {
   _draftFilter[key] = value;
+  if (key === 'search' && !value) {
+    window._draftLiveSearchResults = [];
+    window._draftLastLiveSearchQuery = null;
+  }
   const tbody = document.getElementById('draft-pool-body');
   if (tbody && _draft?.pool) {
     tbody.innerHTML = renderDraftPool(
@@ -2228,6 +2287,31 @@ async function submitOpenDraft(leagueId) {
 
 // Called by the Draft button — reads player from window._draftFilteredPool
 // by index so we never have to serialize a player object into an onclick attribute.
+// Fires a live MLB player search when the local pool doesn't have enough
+// matches (e.g. searching for a lower-HR player like a catcher who isn't in
+// the top-400 pool). Results get merged into the next render automatically.
+let _draftSearchDebounce = null;
+function triggerLiveDraftSearch(query) {
+  clearTimeout(_draftSearchDebounce);
+  _draftSearchDebounce = setTimeout(async () => {
+    try {
+      const leagueId = CURRENT_LEAGUE.league.id;
+      const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}&search=${encodeURIComponent(query)}`, {
+        headers: authHeaders(), cache: 'no-store',
+      });
+      const res = await r.json();
+      if (res.ok) {
+        window._draftLiveSearchResults = res.results || [];
+        // Only re-render if the search box still has this exact query
+        const searchInput = document.getElementById('draft-search');
+        if (searchInput && searchInput.value.toLowerCase() === query) {
+          setDraftFilter('search', searchInput.value);
+        }
+      }
+    } catch {}
+  }, 400); // debounce so we don't fire on every keystroke
+}
+
 async function makeDraftPickByIndex(idx) {
   const player = window._draftFilteredPool?.[idx];
   if (!player) {

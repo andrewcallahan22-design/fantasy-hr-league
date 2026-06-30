@@ -175,6 +175,57 @@ export default async (req) => {
   const session = await verifyAuth(req);
   const myMgr = session ? managerForUser(league, session.email) : null;
 
+  // ── LIVE PLAYER SEARCH ──
+  // Used when a player isn't in the pre-loaded top-400 pool (e.g. lower-HR
+  // players like catchers, or anyone the leaders endpoint missed). Searches
+  // the live MLB people-search API for ANY active player by name.
+  if (req.method === 'GET' && url.searchParams.get('search')) {
+    const query = url.searchParams.get('search').trim();
+    if (query.length < 2) return Response.json({ ok: true, results: [] });
+    try {
+      const season = new Date().getFullYear();
+      const searchUrl = `https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(query)}&sportIds=1&active=true&hydrate=currentTeam,stats(group=hitting,type=season,season=${season})`;
+      const resp = await fetch(searchUrl);
+      if (!resp.ok) throw new Error(`MLB search ${resp.status}`);
+      const data = await resp.json();
+      const people = (data.people || []).filter(p => p.primaryPosition?.abbreviation !== 'P'); // hitters only
+
+      const d = league.draft;
+      const picks = d?.picks || [];
+      const takenNorms = picks.map(p => normName(p.player));
+      const takenTeams = new Set(picks.filter(p => !p.skipped).map(p => p.team));
+
+      const results = people.map(p => {
+        const seasonStat = p.stats?.find(s => s.group?.displayName === 'hitting')?.splits?.[0]?.stat;
+        const hr = parseInt(seasonStat?.homeRuns) || 0;
+        const team = TEAM_ABBR[p.currentTeam?.id] || p.currentTeam?.abbreviation || '?';
+        const isPlayerDrafted = takenNorms.includes(normName(p.fullName));
+        const isTeamTaken = takenTeams.has(team);
+        return {
+          id: p.id,
+          name: p.fullName,
+          team,
+          pos: p.primaryPosition?.abbreviation || '?',
+          hr,
+          prevHR: 0,
+          health: p.status?.code === 'A' ? 'Active' : (p.status?.code?.startsWith('D') ? 'IL' : 'Active'),
+          rank: 0,
+          drafted: isPlayerDrafted || isTeamTaken,
+          draftedBy: isPlayerDrafted
+            ? (picks.find(pk => normName(pk.player) === normName(p.fullName))?.mgr || null)
+            : isTeamTaken
+              ? (picks.find(pk => pk.team === team && !pk.skipped)?.mgr || null)
+              : null,
+          teamTaken: isTeamTaken && !isPlayerDrafted,
+        };
+      }).slice(0, 25);
+
+      return Response.json({ ok: true, results });
+    } catch (e) {
+      return Response.json({ ok: false, error: e.message, results: [] });
+    }
+  }
+
   if (req.method === 'GET') {
     // Figure out which month to show prev-month HRs from.
     // "basedOn" is the most recent completed month (what draft order is based on).
