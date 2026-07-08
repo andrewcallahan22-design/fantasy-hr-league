@@ -1296,11 +1296,26 @@ function renderOnboardingChecklist() {
   const hasPicks = !!(league.draft || (league.months[league.currentMonth] && Object.values(league.months[league.currentMonth].rosters || {}).some(r => r.some(s => s.player))));
   if (hasOtherMembers && hasPicks) return '';
 
+  // Settings step is "done" if the commissioner has saved custom settings —
+  // detected by comparing against the default values. If any field differs
+  // from the out-of-the-box defaults, they've customized it.
+  const s = league.settings || {};
+  const hasCustomSettings = !!(
+    (s.rosterSize && s.rosterSize !== 6) ||
+    (s.positionRule && s.positionRule !== 'one-duplicate-allowed') ||
+    (s.teamRule && s.teamRule !== 'all-unique') ||
+    s.multiPlayerPerTeam === true ||
+    (s.redraftCadence && s.redraftCadence !== 'monthly') ||
+    // Also consider "done" if they've explicitly saved settings at all
+    // (tracked by a timestamp flag we set in saveSettings)
+    league.settingsSavedAt
+  );
+
   const steps = [
     { done: hasOtherMembers, title: 'Invite your managers',
       help: 'Share this link. They sign up, you approve them in the Commissioner tab.',
       action: `<div class="invite-box"><div class="invite-url">${escapeHtml(inviteFull)}</div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" data-share-btn onclick="shareInvite('${escapeAttr(inviteFull)}', '${escapeAttr(league.name)}')">📨 Send invite</button><button class="btn btn-sm btn-ghost" onclick="copyInvite('${escapeAttr(inviteFull)}')">📋 Copy link</button></div></div>` },
-    { done: false, title: 'Customize league settings (optional)',
+    { done: hasCustomSettings, title: 'Customize league settings (optional)',
       help: 'Roster size, scoring categories, position and team rules. The defaults match a 6-player monthly HR league.',
       action: `<button class="btn btn-sm" onclick="navigate('/league/${encodeURIComponent(league.id)}/settings')">Open settings</button>` },
     { done: hasPicks, title: 'Open your first draft',
@@ -1309,7 +1324,7 @@ function renderOnboardingChecklist() {
   ];
 
   return `
-    <div class="onboard">
+    <div class="onboard" id="onboard-checklist">
       <div class="onboard-title">Getting started</div>
       <div class="onboard-sub">A few quick steps to get your league rolling.</div>
       ${steps.map(s => `
@@ -3008,7 +3023,8 @@ function renderSettings(body) {
             </div>
           </div>
           <div class="error" id="settings-err"></div>
-          <button class="btn btn-primary" onclick="saveSettings()">Save rules</button>
+          <button class="btn btn-primary" id="settings-save-btn" onclick="saveSettings()" disabled style="opacity:0.45">Save rules</button>
+          <div class="input-help" style="margin-top:8px">Make changes above to enable saving.</div>
         </div>
       </div>
       <div class="panel">
@@ -3079,6 +3095,8 @@ function renderSettings(body) {
 
   body.innerHTML = html;
   renderNotificationsPanelInto('notif-panel');
+  // Wire up dirty tracking so save button enables only when something changes
+  requestAnimationFrame(() => initSettingsDirtyTracking());
 }
 
 async function openLinkMember(manager) {
@@ -3130,6 +3148,48 @@ async function renameLeague() {
     renderLeagueShell(); // rebuilds the whole league shell with the new name in the header
   }
 }
+// Called once after renderSettings() builds the form.
+// Watches all inputs/selects in the settings panel and re-enables the save
+// button the moment any value changes, then greys it out again after saving.
+function initSettingsDirtyTracking() {
+  const btn = document.getElementById('settings-save-btn');
+  if (!btn) return;
+
+  // Capture initial snapshot of all settings values
+  const ids = ['set-rosterSize','set-redraftCadence','set-positionRule','set-teamRule','set-multiPlayerPerTeam','set-scoringCategories'];
+  const snapshot = {};
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (el.multiple) snapshot[id] = [...el.selectedOptions].map(o => o.value).join(',');
+    else snapshot[id] = el.value;
+  }
+
+  function enableSave() {
+    // Check if anything actually changed from the snapshot
+    let dirty = false;
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      const current = el.multiple ? [...el.selectedOptions].map(o => o.value).join(',') : el.value;
+      if (current !== snapshot[id]) { dirty = true; break; }
+    }
+    if (dirty) {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.textContent = 'Save rules';
+      const hint = btn.nextElementSibling;
+      if (hint) hint.style.display = 'none';
+    }
+  }
+
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', enableSave);
+    if (el && el.type === 'number') el.addEventListener('input', enableSave);
+  }
+}
+
 async function saveSettings() {
   const err = document.getElementById('settings-err');
   err.textContent = '';
@@ -3146,18 +3206,24 @@ async function saveSettings() {
 
   const res = await leagueAction('settings', { settings });
   if (res?.ok) {
-    // Update CURRENT_LEAGUE in memory immediately with the saved settings.
-    // This means the subsequent re-render uses the new values from the start —
-    // no flash to old values, no double-render, no confusion about which is correct.
+    // Update in memory immediately — no flash, no double-render
     CURRENT_LEAGUE.league.settings = { ...CURRENT_LEAGUE.league.settings, ...settings };
+    // Stamp a saved timestamp so the onboarding checklist detects completion
+    CURRENT_LEAGUE.league.settingsSavedAt = Date.now();
 
-    // Re-render the settings tab once with the updated in-memory state.
-    // We deliberately do NOT call refreshLeague() here because that would
-    // fetch from the server and cause a second re-render (the flash you saw).
-    renderActiveTab();
+    // Grey out the save button — nothing has changed yet
+    const saveBtn = document.getElementById('settings-save-btn');
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.style.opacity = '0.45';
+      saveBtn.textContent = '✓ Saved';
+    }
 
-    // Show a persistent "Saved" banner that stays visible for 4 seconds
-    // so there's no ambiguity about whether the save succeeded.
+    // Re-render just the onboarding checklist so the settings step checks off
+    const onboardEl = document.getElementById('onboard-checklist');
+    if (onboardEl) onboardEl.outerHTML = renderOnboardingChecklist() || '';
+
+    // Show confirmation banner
     const banner = document.getElementById('settings-err');
     if (banner) {
       banner.style.color = 'var(--green)';
