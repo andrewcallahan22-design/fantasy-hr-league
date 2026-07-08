@@ -305,8 +305,9 @@ export default async (req) => {
       return Response.json({ ok: false, error: `No manager named "${targetManager}" in this league` }, { status: 404 });
     }
 
-    slot.email  = targetEmail;
-    slot.status = 'active';
+    slot.email    = targetEmail;
+    slot.status   = 'active';
+    if (body.realName) slot.realName = String(body.realName).trim().slice(0, 60);
     if (!slot.joinedAt) slot.joinedAt = Date.now();
 
     await saveLeague(league);

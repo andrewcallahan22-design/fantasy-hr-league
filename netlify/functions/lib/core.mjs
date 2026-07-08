@@ -112,6 +112,34 @@ async function fetchNextGame(league, playerName, teamAbbr) {
   }
 }
 
+// Fetch real-time health status for a player via team 40-man roster.
+// Returns { status: 'Active'|'IL'|..., detail: string }
+async function fetchHealth(league, playerName) {
+  try {
+    const id = await resolvePlayerId(league, playerName);
+    // Get current team
+    const profileResp = await fetch(`https://statsapi.mlb.com/api/v1/people/${id}?hydrate=currentTeam`);
+    if (!profileResp.ok) return { status: 'Active', detail: '' };
+    const profile = await profileResp.json();
+    const teamId = profile?.people?.[0]?.currentTeam?.id;
+    if (!teamId) return { status: 'Active', detail: '' };
+    // Check 40-man roster for IL status
+    const rosterResp = await fetch(`https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=40Man&season=${new Date().getFullYear()}`);
+    if (!rosterResp.ok) return { status: 'Active', detail: '' };
+    const rosterData = await rosterResp.json();
+    const entry = (rosterData.roster || []).find(e => e?.person?.id == id);
+    if (!entry) return { status: 'Active', detail: '' };
+    const code = entry.status?.code || 'A';
+    const desc = entry.status?.description || '';
+    if (code.startsWith('D') || code === 'IL') return { status: 'IL', detail: desc || code };
+    if (code !== 'A') return { status: code, detail: desc };
+    return { status: 'Active', detail: '' };
+  } catch {
+    return { status: 'Active', detail: '' };
+  }
+}
+
+
 function logChange(league, player, delta, mgr, month, src) {
   if (!league.changeLog) league.changeLog = [];
   league.changeLog.push({ t: Date.now(), player, delta, mgr, month, src });
@@ -163,20 +191,22 @@ export async function runSyncForLeague(leagueId) {
   const hrEvents  = [];
   const leaderBefore = computeLeader(league);
 
-  // Fetch stats + next game in parallel
+  if (!league.health) league.health = {};
+
+  // Fetch stats + next game + health in parallel
   const results = await Promise.all(players.map(async (p) => {
     try {
-      // Find the team abbreviation for this player from any roster slot
       let teamAbbr = null;
       for (const mgr of league.managers) {
         const slot = (league.months[key].rosters[mgr] || []).find(s => s.player === p);
         if (slot?.team) { teamAbbr = slot.team; break; }
       }
-      const [stats, nextGame] = await Promise.all([
+      const [stats, nextGame, health] = await Promise.all([
         fetchGameLogStats(league, p, seasonYear),
         fetchNextGame(league, p, teamAbbr),
+        fetchHealth(league, p),
       ]);
-      return { player: p, ...stats, nextGame, ok: true };
+      return { player: p, ...stats, nextGame, health, ok: true };
     } catch (e) {
       return { player: p, ok: false, err: e.message };
     }
@@ -192,9 +222,8 @@ export async function runSyncForLeague(leagueId) {
     league.streaks[nk]     = r.last7;
     league.last24h[nk]     = r.last24h;
     league.seasonHints[nk] = r.seasonHR;
-    // Always write nextGame — even null — so stale pre-formatted strings
-    // from older syncs get evicted and replaced with fresh ISO-timestamp data.
-    league.nextGame[nk] = r.nextGame;
+    league.health[nk]      = r.health || { status: 'Active', detail: '' };
+    league.nextGame[nk]    = r.nextGame;
 
     const baseline = league.seasonBaseline[nk];
     if (baseline === undefined) {

@@ -38,8 +38,16 @@ export default async (req) => {
 
   if (req.method === 'GET') {
     const session = await verifyAuth(req);
+    if (!session) return Response.json({ me: null }, { headers: NO_CACHE });
+    const user = await getUser(session.email);
     return Response.json({
-      me: session ? { email: session.email, isAdmin: session.isAdmin } : null,
+      me: {
+        email:       session.email,
+        isAdmin:     session.isAdmin,
+        displayName: user?.displayName || '',
+        photoUrl:    user?.photoUrl    || '',
+        hrEmoji:     user?.hrEmoji     || '',
+      },
     }, { headers: NO_CACHE });
   }
 
@@ -60,7 +68,7 @@ export default async (req) => {
     const salt = crypto.randomBytes(16).toString('hex');
     await saveUser({ email, displayName, salt, hash: hashPassword(password, salt), createdAt: Date.now(), leagues: [] });
     const token = await createSession(email);
-    return Response.json({ ok: true, token, email, displayName, isAdmin: isAdminEmail(email) });
+    return Response.json({ ok: true, token, email, displayName, photoUrl: '', hrEmoji: '', isAdmin: isAdminEmail(email) });
   }
 
   // ── LOGIN ──
@@ -71,7 +79,7 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Wrong email or password' }, { status: 401 });
     }
     const token = await createSession(u.email);
-    return Response.json({ ok: true, token, email: u.email, displayName: u.displayName, isAdmin: isAdminEmail(u.email) });
+    return Response.json({ ok: true, token, email: u.email, displayName: u.displayName, photoUrl: u.photoUrl || '', hrEmoji: u.hrEmoji || '', isAdmin: isAdminEmail(u.email) });
   }
 
   // ── LOGOUT ──
@@ -125,7 +133,7 @@ export default async (req) => {
     return Response.json({ ok: true, token: sessionToken, email, displayName: user.displayName, isAdmin: isAdminEmail(email) });
   }
 
-  // ── UPDATE DISPLAY NAME ──
+  // ── UPDATE DISPLAY NAME (legacy — kept for backwards compat) ──
   if (body.action === 'update-display-name') {
     const session = await verifyAuth(req);
     if (!session) return Response.json({ ok: false, error: 'Not signed in' }, { status: 401 });
@@ -135,6 +143,36 @@ export default async (req) => {
     if (!user) return Response.json({ ok: false, error: 'Account not found' }, { status: 404 });
     await saveUser({ ...user, displayName });
     return Response.json({ ok: true, displayName }, { headers: NO_CACHE });
+  }
+
+  // ── UPDATE PROFILE — display name, photo URL, HR emoji ──
+  if (body.action === 'update-profile') {
+    const session = await verifyAuth(req);
+    if (!session) return Response.json({ ok: false, error: 'Not signed in' }, { status: 401 });
+    const user = await getUser(session.email);
+    if (!user) return Response.json({ ok: false, error: 'Account not found' }, { status: 404 });
+
+    const updates = {};
+    if (body.displayName !== undefined) {
+      const name = String(body.displayName || '').trim();
+      if (!name) return Response.json({ ok: false, error: 'Display name cannot be empty' }, { status: 400 });
+      updates.displayName = name;
+    }
+    if (body.photoUrl !== undefined) {
+      // Basic URL validation — must be http/https or empty to clear
+      const url = String(body.photoUrl || '').trim();
+      if (url && !url.match(/^https?:\/\/.+/)) {
+        return Response.json({ ok: false, error: 'Photo must be a valid http/https URL' }, { status: 400 });
+      }
+      updates.photoUrl = url;
+    }
+    if (body.hrEmoji !== undefined) {
+      // Limit to a reasonable length — one emoji is typically 1-4 chars
+      const emoji = String(body.hrEmoji || '').trim().slice(0, 8);
+      updates.hrEmoji = emoji;
+    }
+    await saveUser({ ...user, ...updates });
+    return Response.json({ ok: true, ...updates }, { headers: NO_CACHE });
   }
 
   // ── CHANGE PASSWORD ──

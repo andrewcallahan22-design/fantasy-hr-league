@@ -363,7 +363,12 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Only the commissioner can open a draft' }, { status: 403 });
     }
     if (league.draft?.status === 'active') {
-      return Response.json({ ok: false, error: 'A draft is already in progress' }, { status: 400 });
+      // Allow force-reset if the commissioner explicitly requests it
+      if (body.forceReset) {
+        league.draft = null;
+      } else {
+        return Response.json({ ok: false, error: 'A draft is already in progress', draftActive: true }, { status: 400 });
+      }
     }
     const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
     const latest = keys[keys.length - 1] || league.currentMonth;
@@ -373,14 +378,26 @@ export default async (req) => {
     }
 
     // Draft order: reverse of SEASON-LONG standings (worst total HR picks first).
-    // Sums HR across all months so the manager who struggled all season gets
-    // the first pick — fairer than just the prior month.
+    // For brand new leagues where everyone has 0 HR, randomize the order
+    // so it's fair rather than defaulting to an arbitrary creation order.
     const seasonTotals = (mgr) =>
       Object.keys(league.months || {}).reduce((s, k) => s + monthTotal(league, k, mgr), 0);
 
-    const baseOrder = (body.order?.length === league.managers.length)
-      ? body.order
-      : [...league.managers].sort((a, b) => seasonTotals(a) - seasonTotals(b));
+    let baseOrder;
+    if (body.order?.length === league.managers.length) {
+      // Commissioner manually set the order
+      baseOrder = body.order;
+    } else {
+      const totals = league.managers.map(m => ({ mgr: m, hr: seasonTotals(m) }));
+      const allZero = totals.every(t => t.hr === 0);
+      if (allZero) {
+        // New league — randomize so no one has an unfair advantage
+        baseOrder = [...league.managers].sort(() => Math.random() - 0.5);
+      } else {
+        // Sort by season HR ascending (worst picks first)
+        baseOrder = totals.sort((a, b) => a.hr - b.hr).map(t => t.mgr);
+      }
+    }
 
     // Default to straight draft (1-2-3-4 repeating), not snake.
     const draftType = body.draftType || league.settings?.draftType || 'straight';

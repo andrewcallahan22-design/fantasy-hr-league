@@ -78,15 +78,27 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
     queue.push({ email, payload, tag });
   };
 
+  // Load user profiles to get custom hrEmoji per manager
+  const { getStore } = await import('@netlify/blobs');
+  const userStore = getStore('league');
+
+  async function getHrEmoji(email) {
+    try {
+      const user = email ? await userStore.get(`user:${email.toLowerCase()}`, { type: 'json' }) : null;
+      return (user?.hrEmoji?.trim()) || '🚀';
+    } catch { return '🚀'; }
+  }
+
   // ── HR events ──
   for (const ev of hrEvents) {
     const tag = hrTag(league.id, ev);
     const ownerEmail = emailForManager(league, ev.mgr);
 
-    // Owner gets celebratory push
+    // Owner gets celebratory push with their custom emoji
     if (ownerEmail) {
+      const hrEmoji = await getHrEmoji(ownerEmail);
       enqueue(ownerEmail, JSON.stringify({
-        title: `🚀 BOOM! ${ev.player} just went yard!`,
+        title: `${hrEmoji} ${ev.player} just went yard!`,
         body: `+${ev.delta} HR for YOUR team · ${league.name}`,
         tag,
         url: `/league/${league.id}`,
@@ -219,5 +231,39 @@ export async function dispatchDraftTurnNotification({ league, onClockManager, pi
     await saveSubs(allSubs);
   }
   console.log(`[draft-notify:${league.id}] Notified ${onClockManager} (${email}) — ${sent} device(s)`);
+  return { sent };
+}
+
+// ── COMMISSIONER NOTIFICATION ──
+// Sends a push notification to the league commissioner.
+// Used for join requests, and any other admin action that needs attention.
+export async function dispatchCommissionerNotification({ league, title, body, url, tag }) {
+  if (inQuietHours()) return { sent: 0, suppressed: true };
+
+  const commishEmail = league.commissioner?.toLowerCase();
+  if (!commishEmail) return { sent: 0, reason: 'no commissioner email' };
+
+  const allSubs = await loadSubs();
+  const subs = allSubs[commishEmail] || [];
+  if (!subs.length) return { sent: 0, reason: 'commissioner has no push subscriptions' };
+
+  const payload = JSON.stringify({ title, body, tag: tag || `commish-${league.id}`, url: url || `/league/${league.id}/settings` });
+
+  let sent = 0;
+  const deadEndpoints = new Set();
+  for (const sub of subs) {
+    try {
+      const res = await sendPush(sub, payload, { ttl: 86400, urgency: 'normal' });
+      if (res.ok) sent++;
+      else if (res.status === 404 || res.status === 410) deadEndpoints.add(sub.endpoint);
+    } catch (e) {
+      console.warn(`[commish-notify:${league.id}] Push failed:`, e.message);
+    }
+  }
+  if (deadEndpoints.size) {
+    allSubs[commishEmail] = subs.filter(s => !deadEndpoints.has(s.endpoint));
+    await saveSubs(allSubs);
+  }
+  console.log(`[commish-notify:${league.id}] Commissioner notified — ${sent} device(s)`);
   return { sent };
 }

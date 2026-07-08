@@ -6,6 +6,7 @@
 //   - 'active' only when the user is auto-joined (e.g. they are the commissioner)
 import { loadLeague, listLeagues, saveLeague, ensureLegacyMigrated } from './lib/storage.mjs';
 import { verifyAuth, isCommissioner } from './lib/auth.mjs';
+import { normName } from './lib/core.mjs';
 
 const NO_CACHE = { 'Cache-Control': 'no-store' };
 
@@ -19,11 +20,15 @@ export default async (req) => {
   const body = await req.json().catch(() => ({}));
   const inviteToken = String(body.inviteToken || '');
   const managerName = String(body.managerName || '').trim();
+  const realName    = String(body.realName    || '').trim();
   if (!inviteToken || !managerName) {
     return Response.json({ ok: false, error: 'Invite token and manager name required' }, { status: 400 });
   }
   if (managerName.length > 30) {
     return Response.json({ ok: false, error: 'Manager name 30 chars max' }, { status: 400 });
+  }
+  if (realName && realName.length > 60) {
+    return Response.json({ ok: false, error: 'Real name 60 chars max' }, { status: 400 });
   }
 
   // Find the league by invite token
@@ -57,8 +62,9 @@ export default async (req) => {
   // Exception: if the joining user IS the commissioner, auto-approve.
   const status = isCommissioner(league, session.email) ? 'active' : 'pending';
   league.members.push({
-    manager: managerName,
-    email: session.email,
+    manager:  managerName,
+    realName: realName || session.displayName || '', // fall back to account display name
+    email:    session.email,
     status,
     joinedAt: Date.now(),
   });
@@ -71,6 +77,23 @@ export default async (req) => {
     }
   }
   await saveLeague(league);
+
+  // Notify the commissioner when a new pending request comes in so they
+  // don't have to manually check the Commissioner tab.
+  if (status === 'pending') {
+    try {
+      const { dispatchCommissionerNotification } = await import('./lib/notify.mjs');
+      await dispatchCommissionerNotification({
+        league,
+        title: `🙋 ${realName || managerName} wants to join`,
+        body: `${realName ? `${realName} (team: ${managerName})` : managerName} requested to join ${league.name}. Open the Commissioner tab to approve or decline.`,
+        url: `/league/${league.id}/settings`,
+        tag: `join-request-${league.id}-${normName(managerName)}`,
+      });
+    } catch (e) {
+      console.warn('Commissioner join notification failed (non-fatal):', e.message);
+    }
+  }
 
   return Response.json({ ok: true, leagueId: league.id, status }, { headers: NO_CACHE });
 };

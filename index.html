@@ -596,12 +596,13 @@ body::before {
 </div>
 
 <script>
-const API_AUTH = '/.netlify/functions/auth';
+const API_AUTH   = '/.netlify/functions/auth';
 const API_LEAGUE = '/.netlify/functions/league';
-const API_JOIN = '/.netlify/functions/join';
-const API_SYNC = '/.netlify/functions/run-sync';
-const API_DRAFT = '/.netlify/functions/draft';
-const API_PUSH = '/.netlify/functions/push';
+const API_JOIN   = '/.netlify/functions/join';
+const API_SYNC   = '/.netlify/functions/run-sync';
+const API_DRAFT  = '/.netlify/functions/draft';
+const API_PUSH   = '/.netlify/functions/push';
+const API_PLAYER = '/.netlify/functions/player';
 
 let SESSION = null;
 try { SESSION = JSON.parse(localStorage.getItem('fhr_v7_session')) || null; } catch(e){}
@@ -710,7 +711,7 @@ async function submitAuth() {
     const r = await fetch(API_AUTH, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const res = await r.json();
     if (!res.ok) { errEl.textContent = res.error || 'Something went wrong'; return; }
-    setSession({ token: res.token, email: res.email, displayName: res.displayName, isAdmin: !!res.isAdmin });
+    setSession({ token: res.token, email: res.email, displayName: res.displayName, photoUrl: res.photoUrl||'', hrEmoji: res.hrEmoji||'', isAdmin: !!res.isAdmin });
     closeAuth();
     if (_authReturnTo) {
       const dest = _authReturnTo;
@@ -849,7 +850,7 @@ async function submitResetPassword(token) {
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Reset failed — the link may have expired'; return; }
-    setSession({ token: res.token, email: res.email, displayName: res.displayName, isAdmin: !!res.isAdmin });
+    setSession({ token: res.token, email: res.email, displayName: res.displayName, photoUrl: res.photoUrl||'', hrEmoji: res.hrEmoji||'', isAdmin: !!res.isAdmin });
     document.getElementById('reset-form').style.display = 'none';
     document.getElementById('reset-success').style.display = 'block';
     // Clean up the URL
@@ -938,6 +939,11 @@ function onCreateClick() {
 }
 
 async function renderMyLeagues() {
+  // Show a one-time push notification prompt if on mobile PWA and not yet subscribed
+  // Show it once per session — store dismissal in sessionStorage so it doesn't
+  // nag on every page load, but comes back next time they open the app.
+  maybeShowNotificationPrompt();
+
   const v = document.getElementById('view');
   v.innerHTML = `
     <div class="container">
@@ -970,14 +976,16 @@ async function renderMyLeagues() {
       return;
     }
     list.innerHTML = `<div class="league-grid">${data.leagues.map(lg => `
-      <button class="league-card" onclick="navigate('/league/${encodeURIComponent(lg.id)}')">
+      <button class="league-card ${lg.myStatus === 'pending' ? 'style="border-color:rgba(240,199,94,0.3);background:rgba(240,199,94,0.04)"' : ''}" onclick="navigate('/league/${encodeURIComponent(lg.id)}')">
         <div class="league-card-name">${escapeHtml(lg.name)}</div>
         <div class="league-card-meta">
           ${lg.isCommissioner ? '<span class="league-card-status commish">Commissioner</span>' : ''}
-          ${lg.myStatus === 'pending' ? '<span class="league-card-status pending">Pending</span>' : ''}
+          ${lg.myStatus === 'pending' ? `
+            <span class="league-card-status pending">⏳ Pending approval</span>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Waiting for the commissioner to approve your request.</div>
+          ` : ''}
           ${lg.myStatus === 'active' && !lg.isCommissioner ? `<span class="league-card-status">Manager: ${escapeHtml(lg.myManager)}</span>` : ''}
-          ${lg.memberCount} member${lg.memberCount === 1 ? '' : 's'}
-          ${lg.pendingCount ? ` · <span class="league-card-pending">${lg.pendingCount} pending</span>` : ''}
+          <div style="margin-top:4px">${lg.memberCount} member${lg.memberCount === 1 ? '' : 's'}${lg.pendingCount ? ` · <span class="league-card-pending">${lg.pendingCount} pending</span>` : ''}</div>
         </div>
       </button>
     `).join('')}</div>`;
@@ -1115,32 +1123,70 @@ async function renderJoinPage(token) {
       v.innerHTML = `<div class="auth-shell"><div class="auth-panel"><div class="auth-title">Invite not found</div><p class="auth-sub">This invite link is invalid or has been replaced. Ask your commissioner for a fresh one.</p></div></div>`;
       return;
     }
-    if (!SESSION) {
+
+    // ── Already signed in ──
+    // Auto-join as quickly as possible. If they're already in this league,
+    // skip straight to My Leagues. Otherwise show a one-tap confirm with
+    // their display name pre-filled — no password, no signup friction.
+    if (SESSION) {
+      // Check if already a member of this league
+      const leagueCheck = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(res.league.id), {
+        headers: authHeaders(), cache: 'no-store',
+      }).then(r2 => r2.json()).catch(() => null);
+
+      if (leagueCheck?.ok && leagueCheck.myManager) {
+        // Already in this league — go straight to it
+        navigate('/league/' + encodeURIComponent(res.league.id));
+        return;
+      }
+
+      // Not in yet — show one-tap join with name pre-filled
       v.innerHTML = `
         <div class="auth-shell">
           <div class="auth-panel">
             <div class="auth-title">Join ${escapeHtml(res.league.name)}</div>
-            <p class="auth-sub">${res.league.managerCount} manager${res.league.managerCount === 1 ? '' : 's'} already in this league.</p>
-            <button class="btn btn-primary" style="width:100%" onclick="openAuth('signup','/join/${encodeURIComponent(token)}')">Create account &amp; join</button>
-            <div class="auth-divider">Already have an account?</div>
-            <button class="btn btn-ghost" style="width:100%" onclick="openAuth('login','/join/${encodeURIComponent(token)}')">Sign in</button>
+            <p class="auth-sub" style="margin-bottom:18px">
+              You're signed in as <strong>${escapeHtml(SESSION.displayName || SESSION.email)}</strong>.
+              Confirm your details and join instantly — no password needed.
+            </p>
+            <div class="error" id="join-err"></div>
+            <div class="field">
+              <label>Your real name</label>
+              <input class="input" id="join-real-name" maxlength="60"
+                value="${escapeHtml(SESSION.displayName || '')}"
+                placeholder="First and last name">
+              <div class="input-help">Shown under your team name so other managers know who you are.</div>
+            </div>
+            <div class="field">
+              <label>Your team name in this league</label>
+              <input class="input" id="join-manager" maxlength="30"
+                value="${escapeHtml(SESSION.displayName || '')}"
+                placeholder="e.g. Bombers, The Yard Birds…">
+              <div class="input-help">Can be anything — a nickname, a team name, whatever you want to be called.</div>
+            </div>
+            <button class="btn btn-primary" style="width:100%" onclick="submitJoinInstant('${escapeAttr(token)}', '${escapeAttr(res.league.id)}')">
+              Join ${escapeHtml(res.league.name)} →
+            </button>
           </div>
         </div>
       `;
+      // Auto-focus the manager name input
+      setTimeout(() => document.getElementById('join-manager')?.focus(), 100);
       return;
     }
+
+    // ── Not signed in ──
+    // Show sign-in / sign-up options. After auth, the route re-renders
+    // and they land back here as a signed-in user (handled above).
     v.innerHTML = `
       <div class="auth-shell">
         <div class="auth-panel">
           <div class="auth-title">Join ${escapeHtml(res.league.name)}</div>
-          <p class="auth-sub">Pick what your team is called in this league.</p>
-          <div class="error" id="join-err"></div>
-          <div class="field">
-            <label>Manager name</label>
-            <input class="input" id="join-manager" maxlength="30" value="${escapeHtml(SESSION.displayName || '')}">
-          </div>
-          <button class="btn btn-primary" style="width:100%" onclick="submitJoin('${escapeAttr(token)}')">Request to join</button>
-          <p class="input-help" style="margin-top:12px;text-align:center">The commissioner will see your request and approve it.</p>
+          <p class="auth-sub">${res.league.managerCount} manager${res.league.managerCount === 1 ? '' : 's'} already in this league.</p>
+          <button class="btn btn-primary" style="width:100%;margin-bottom:10px" onclick="openAuth('signup','/join/${encodeURIComponent(token)}')">Create account &amp; join</button>
+          <div class="auth-divider">Already have an account?</div>
+          <button class="btn btn-ghost" style="width:100%" onclick="openAuth('login','/join/${encodeURIComponent(token)}')">Sign in to join</button>
+          <p class="input-help" style="text-align:center;margin-top:12px">Already in another league? Sign in and you'll join this one too — no new password needed.</p>
         </div>
       </div>
     `;
@@ -1148,23 +1194,41 @@ async function renderJoinPage(token) {
     v.innerHTML = `<div class="auth-shell"><div class="auth-panel"><div class="notice err">Couldn't reach the server.</div></div></div>`;
   }
 }
-async function submitJoin(token) {
+
+// One-tap join for signed-in users — no re-auth needed
+async function submitJoinInstant(token, leagueId) {
   const err = document.getElementById('join-err');
   err.textContent = '';
   const managerName = document.getElementById('join-manager').value.trim();
-  if (!managerName) { err.textContent = 'Manager name required'; return; }
+  const realName    = document.getElementById('join-real-name')?.value.trim() || '';
+  if (!managerName) { err.textContent = 'Team name required'; return; }
+
+  const btn = document.querySelector(`[onclick*="submitJoinInstant"]`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Joining…'; }
+
   try {
     const r = await fetch(API_JOIN, {
-      method:'POST',
-      headers:{'Content-Type':'application/json', ...authHeaders()},
-      body: JSON.stringify({inviteToken: token, managerName}),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ inviteToken: token, managerName, realName }),
     });
     const res = await r.json();
-    if (!res.ok) { err.textContent = res.error || 'Could not join'; return; }
-    navigate('/league/' + encodeURIComponent(res.leagueId));
+    if (!res.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = `Join →`; }
+      err.textContent = res.error || 'Could not join';
+      return;
+    }
+    // Success — navigate to My Leagues where they'll see the pending request
+    navigate('/');
   } catch (e) {
-    err.textContent = 'Connection failed';
+    if (btn) { btn.disabled = false; btn.textContent = `Join →`; }
+    err.textContent = 'Connection failed — try again';
   }
+}
+
+// Legacy function kept for backwards compatibility
+async function submitJoin(token) {
+  await submitJoinInstant(token, null);
 }
 
 let CURRENT_LEAGUE = null;
@@ -1259,7 +1323,15 @@ function renderLeagueShell() {
     // My Settings is visible to every signed-in member
     ...(SESSION ? [{ id: 'my-settings', label: '⚙ Settings' }] : []),
     // Commissioner tab only visible to the commissioner
-    ...(isCommish ? [{ id: 'settings', label: '🛠 Commissioner' }] : []),
+    ...(isCommish ? [{
+      id: 'settings',
+      label: (() => {
+        const pendingCount = (league.members || []).filter(m => m.status === 'pending').length;
+        return pendingCount > 0
+          ? `🛠 Commissioner <span style="background:var(--red);color:white;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:4px">${pendingCount}</span>`
+          : '🛠 Commissioner';
+      })(),
+    }] : []),
   ];
 
   let pendingBanner = '';
@@ -1510,10 +1582,20 @@ function renderScoreboard(body) {
 
   // Nudge if sync data hasn't populated yet
   if (!has3d) {
-    html += `<div class="notice info" style="margin-bottom:12px">
-      <strong>+3d</strong> column populates after the next auto-sync (within 1 minute).
-      <button class="btn btn-sm" style="margin-left:10px" onclick="syncCurrentLeague()">⟳ Sync now</button>
-    </div>`;
+    // Check if rosters actually have players yet
+    const hasAnyPlayers = league.managers.some(m =>
+      (month.rosters[m] || []).some(p => p.player)
+    );
+    if (!hasAnyPlayers) {
+      html += `<div class="notice info" style="margin-bottom:12px">
+        📋 Rosters are empty — <strong>complete the draft</strong> to fill them. Stats will start tracking once players are on your roster.
+      </div>`;
+    } else {
+      html += `<div class="notice info" style="margin-bottom:12px">
+        <strong>+3d</strong> column populates after the next auto-sync (within 1 minute).
+        <button class="btn btn-sm" style="margin-left:10px" onclick="syncCurrentLeague()">⟳ Sync now</button>
+      </div>`;
+    }
   }
 
   // Columns: Player | Pos | Team | +3d | HR
@@ -1551,9 +1633,13 @@ function renderScoreboard(body) {
                 if (!p.player) return `<tr><td colspan="5" style="color:var(--text-faint);font-style:italic;padding:9px 12px">— slot ${idx + 1} open —</td></tr>`;
                 const nk         = normName(p.player);
                 const streak     = league.streaks?.[nk];
-                const hr3d       = league.last24h?.[nk]; // field name kept as last24h in storage; now represents 3-day window after next sync
+                const hr3d       = league.last24h?.[nk];
                 const seasonHint = league.seasonHints?.[nk];
+                const health     = league.health?.[nk];
                 const badge      = streakBadge(streak, p.player);
+                const healthBadge = health && health.status !== 'Active'
+                  ? `<span title="${escapeAttr(health.detail || health.status)}" style="font-size:9px;font-weight:600;color:var(--red);background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:3px;margin-left:4px;cursor:default">${escapeHtml(health.status)}</span>`
+                  : '';
                 const seasonLine = seasonHint !== undefined
                   ? `<div style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-faint);margin-top:1px">${seasonHint} ssn</div>`
                   : '';
@@ -1562,7 +1648,10 @@ function renderScoreboard(body) {
                   : `<span style="color:var(--text-faint);font-size:11px">—</span>`;
                 return `<tr>
                   <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">
-                    <strong style="font-size:13px">${escapeHtml(p.player)}</strong>${badge}${seasonLine}
+                    <button onclick="openPlayerProfile(${JSON.stringify(p.player)}, null)" style="background:none;border:none;padding:0;text-align:left;cursor:pointer;color:inherit;font:inherit;width:100%">
+                      <strong style="font-size:13px;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2)">${escapeHtml(p.player)}</strong>${badge}${healthBadge}
+                    </button>
+                    ${seasonLine}
                   </td>
                   <td style="padding:6px 3px">
                     <span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--blue);background:rgba(96,165,250,0.12);padding:1px 3px;border-radius:3px;white-space:nowrap">${escapeHtml(p.position || '—')}</span>
@@ -1591,6 +1680,8 @@ function renderScoreboard(body) {
 //      Sorted by season HR descending; top 3 get medal emojis.
 //   3. Month-by-Month Breakdown (table) — managers × months grid; each cell is THAT month's HR count
 //      for THAT manager (not cumulative). Trophy emoji marks the leader(s) in each month column.
+let _selectedStandingsMonth = null; // null = show all-time view
+
 function renderStandings(body) {
   const { league } = CURRENT_LEAGUE;
   const months = Object.keys(league.months || {});
@@ -1599,6 +1690,10 @@ function renderStandings(body) {
     return;
   }
   months.sort((a, b) => monthSortKey(a) - monthSortKey(b));
+
+  // If we have a selected month filter, show that month's roster view
+  const viewingMonth = _selectedStandingsMonth && months.includes(_selectedStandingsMonth)
+    ? _selectedStandingsMonth : null;
 
   // Build a lookup: managerTotalsByMonth[month][manager] = HR count
   const monthTotals = {};
@@ -1686,35 +1781,80 @@ function renderStandings(body) {
   }).join('');
 
   body.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:16px">
-      <div class="panel" style="margin:0">
-        <div class="panel-header">Monthly Winners</div>
-        <div class="panel-body" style="padding:0">
+    <!-- Month selector tabs — click any month to see that month's roster -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;align-items:center">
+      <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-right:4px">View month:</span>
+      <button class="btn btn-sm ${!viewingMonth ? 'btn-primary' : 'btn-ghost'}" onclick="_selectedStandingsMonth=null;renderStandings(document.getElementById('tab-body'))">Season</button>
+      ${months.map(m => `
+        <button class="btn btn-sm ${viewingMonth === m ? 'btn-primary' : 'btn-ghost'}" onclick="_selectedStandingsMonth='${escapeAttr(m)}';renderStandings(document.getElementById('tab-body'))">${escapeHtml(m.split('-')[0])}</button>
+      `).join('')}
+    </div>
+
+    ${viewingMonth ? `
+      <!-- Single month roster view -->
+      <div class="notice info" style="margin-bottom:14px">Showing <strong>${escapeHtml(viewingMonth)}</strong> rosters — click a player name to view their profile.</div>
+      ${managers.map(mgr => {
+        const roster = league.months[viewingMonth]?.rosters?.[mgr] || [];
+        const total  = roster.reduce((s, p) => s + (parseInt(p.hr) || 0), 0);
+        const isLeader = monthlyLeaders[viewingMonth]?.includes(mgr);
+        return `
+          <div class="panel" style="margin-bottom:12px">
+            <div class="panel-header">
+              ${isLeader ? '🏆 ' : ''}${escapeHtml(mgr)}
+              <span style="font-family:'Roboto Mono',monospace;font-size:13px;color:var(--accent)">${total} HR</span>
+            </div>
+            <div class="panel-body" style="padding:0">
+              <table class="data-table">
+                <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th class="right">HR</th></tr></thead>
+                <tbody>
+                  ${roster.map(p => p.player ? `
+                    <tr>
+                      <td>
+                        <button onclick="openPlayerProfile(${JSON.stringify(p.player)}, null)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2)">${escapeHtml(p.player)}</button>
+                      </td>
+                      <td><span class="team-chip" style="font-size:10px">${escapeHtml(p.team || '—')}</span></td>
+                      <td><span class="pos-chip" style="font-size:10px">${escapeHtml(p.position || p.pos || '—')}</span></td>
+                      <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700">${p.hr || 0}</td>
+                    </tr>
+                  ` : `<tr><td colspan="4" style="color:var(--text-faint);font-style:italic">— empty slot —</td></tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    ` : `
+      <!-- Season-long view: Monthly Winners + Season Standings + Breakdown -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:16px">
+        <div class="panel" style="margin:0">
+          <div class="panel-header">Monthly Winners</div>
+          <div class="panel-body" style="padding:0">
+            <table class="data-table">
+              <thead><tr><th>Month</th><th>Winner</th><th class="right">HR</th></tr></thead>
+              <tbody>${monthlyWinnersRows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel" style="margin:0">
+          <div class="panel-header">Season Standings</div>
+          <div class="panel-body" style="padding:0">
+            <table class="data-table">
+              <thead><tr><th>Manager</th><th class="right">Total HR</th><th class="right">Wins</th></tr></thead>
+              <tbody>${seasonRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">Month-by-Month Breakdown</div>
+        <div class="panel-body" style="padding:0;overflow-x:auto">
           <table class="data-table">
-            <thead><tr><th>Month</th><th>Winner</th><th class="right">HR</th></tr></thead>
-            <tbody>${monthlyWinnersRows}</tbody>
+            <thead><tr><th>Manager</th>${monthHeaderCells}<th class="right" style="border-left:1px solid var(--panel-border)">Total</th></tr></thead>
+            <tbody>${breakdownRows}</tbody>
           </table>
         </div>
       </div>
-      <div class="panel" style="margin:0">
-        <div class="panel-header">Season Standings</div>
-        <div class="panel-body" style="padding:0">
-          <table class="data-table">
-            <thead><tr><th>Manager</th><th class="right">Total HR</th><th class="right">Wins</th></tr></thead>
-            <tbody>${seasonRows}</tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-header">Month-by-Month Breakdown</div>
-      <div class="panel-body" style="padding:0;overflow-x:auto">
-        <table class="data-table">
-          <thead><tr><th>Manager</th>${monthHeaderCells}<th class="right" style="border-left:1px solid var(--panel-border)">Total</th></tr></thead>
-          <tbody>${breakdownRows}</tbody>
-        </table>
-      </div>
-    </div>
+    `}
   `;
 }
 
@@ -2009,7 +2149,7 @@ function renderDraftRoom(body) {
                 </div>
               </div>
               <div class="field">
-                <label>Draft order (worst season HR → best picks first)</label>
+                <label>Draft order ${standings.every(s => s.hr === 0) ? '(randomized — new league, no season stats yet)' : '(worst season HR → best picks first)'}</label>
                 <div id="draft-order-list" style="background:rgba(0,0,0,0.25);border:1px solid var(--panel-border);border-radius:6px;padding:8px;margin-top:4px">
                   ${standings.map((s, i) => `
                     <div class="draft-order-row" data-mgr="${escapeAttr(s.mgr)}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:${i < standings.length - 1 ? '1px dashed var(--panel-border)' : 'none'}">
@@ -2282,7 +2422,9 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
 
     return `<tr style="${rowStyle}">
       <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${p.rank || i + 1}</td>
-      <td style="font-weight:600;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</td>
+      <td style="font-weight:600;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        <button onclick="openPlayerProfile(${JSON.stringify(p.name)}, ${p.id || null})" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</button>
+      </td>
       <td><span class="team-chip" style="font-size:9px;${isTeamTaken ? 'text-decoration:line-through;opacity:0.5' : ''}">${escapeHtml(p.team)}</span></td>
       <td><span class="pos-chip" style="font-size:9px;${posBlocked ? 'background:rgba(239,68,68,0.15);color:var(--red)' : ''}">${escapeHtml(p.pos)}</span></td>
       <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600">${p.hr}</td>
@@ -2436,8 +2578,40 @@ function moveDraftOrder(idx, dir) {
   const newIdx = idx + dir;
   if (newIdx < 0 || newIdx >= rows.length) return;
   const parent = rows[0].parentNode;
-  if (dir === -1) parent.insertBefore(rows[idx], rows[newIdx]);
-  else parent.insertBefore(rows[newIdx], rows[idx]);
+  // Swap the two rows by inserting each before the other
+  if (dir === -1) {
+    // Move row UP: insert current row before the one above it
+    parent.insertBefore(rows[idx], rows[newIdx]);
+  } else {
+    // Move row DOWN: insert the row below before the current row,
+    // which effectively moves the current row down one position
+    parent.insertBefore(rows[newIdx], rows[idx]);
+  }
+  // Update onclick indices after the swap so arrows stay correct
+  const updated = [...document.querySelectorAll('.draft-order-row')];
+  updated.forEach((row, i) => {
+    const btns = row.querySelectorAll('button');
+    if (btns[0]) btns[0].setAttribute('onclick', `moveDraftOrder(${i}, -1)`);
+    if (btns[1]) btns[1].setAttribute('onclick', `moveDraftOrder(${i}, 1)`);
+  });
+}
+
+async function forceResetDraft(leagueId) {
+  if (!confirm('This will clear the stuck draft and let you open a new one. Any picks already made will be lost. Continue?')) return;
+  const err = document.getElementById('open-draft-err');
+  err.textContent = '';
+  const draftType = document.getElementById('draft-type').value;
+  const rounds = parseInt(document.getElementById('draft-rounds').value) || 6;
+  const order = [...document.querySelectorAll('.draft-order-row')].map(r => r.dataset.mgr);
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'open', leagueId, draftType, rounds, order, forceReset: true }),
+  });
+  const res = await r.json();
+  if (!res.ok) { err.textContent = res.error || 'Failed'; return; }
+  window._draftFullPool = null;
+  await loadDraftState(document.getElementById('tab-body'), { fullPool: true });
 }
 
 async function submitOpenDraft(leagueId) {
@@ -2453,7 +2627,14 @@ async function submitOpenDraft(leagueId) {
       body: JSON.stringify({ action: 'open', leagueId, draftType, rounds, order }),
     });
     const res = await r.json();
-    if (!res.ok) { err.textContent = res.error || 'Failed to open draft'; return; }
+    if (!res.ok) {
+      if (res.draftActive) {
+        err.innerHTML = `A draft is already in progress. <button class="btn btn-sm btn-danger" style="margin-left:8px" onclick="forceResetDraft('${escapeAttr(leagueId)}')">Force reset & reopen</button>`;
+      } else {
+        err.textContent = res.error || 'Failed to open draft';
+      }
+      return;
+    }
     window._draftFullPool = null; // clear any stale pool from a prior closed draft
     await loadDraftState(document.getElementById('tab-body'), { fullPool: true });
   } catch (e) {
@@ -2494,14 +2675,76 @@ async function makeDraftPickByIndex(idx) {
     alert(`Player not found at index ${idx}. Pool size: ${window._draftFilteredPool?.length ?? 'undefined'}. Try refreshing.`);
     return;
   }
-  if (!player.name || !player.team || !player.pos) {
-    alert(`Player data incomplete: name="${player.name}" team="${player.team}" pos="${player.pos}". Try refreshing the draft board.`);
+  if (!player.name || !player.team) {
+    alert(`Player data incomplete: name="${player.name}" team="${player.team}". Try refreshing the draft board.`);
     return;
   }
   await makeDraftPick(CURRENT_LEAGUE.league.id, player);
 }
 
 async function makeDraftPick(leagueId, player) {
+  // ── OPTIMISTIC UPDATE ──
+  // Mark the player as drafted and advance the turn immediately in the
+  // local _draft state so the UI responds instantly. If the server rejects
+  // the pick, we roll back and show the error. This eliminates the visible
+  // lag between tapping "Draft" and seeing the board update.
+  const prevDraft = JSON.parse(JSON.stringify(_draft)); // snapshot for rollback
+  const onClock = _draft.onClock;
+
+  if (_draft.draft && onClock) {
+    // Add pick optimistically
+    _draft.draft.picks = _draft.draft.picks || [];
+    _draft.draft.picks.push({
+      mgr: onClock, player: player.name, team: player.team,
+      pos: player.pos || '?', hr: player.hr || 0, mlbId: player.id, t: Date.now(),
+    });
+    // Mark player as drafted in pool
+    if (_draft.pool) {
+      _draft.pool = _draft.pool.map(p =>
+        normName(p.name) === normName(player.name)
+          ? { ...p, drafted: true, draftedBy: onClock }
+          : p.team === player.team && !p.drafted
+            ? { ...p, drafted: true, draftedBy: onClock, teamTaken: true }
+            : p
+      );
+    }
+    // Update pool cache too
+    if (window._draftFullPool) {
+      window._draftFullPool = window._draftFullPool.map(p =>
+        normName(p.name) === normName(player.name)
+          ? { ...p, drafted: true, draftedBy: onClock }
+          : p.team === player.team && !p.drafted
+            ? { ...p, drafted: true, draftedBy: onClock, teamTaken: true }
+            : p
+      );
+    }
+    // Advance the turn
+    const pickIdx = _draft.draft.picks.length;
+    const fullOrder = _draft.draft.fullOrder || [];
+    _draft.onClock = fullOrder[pickIdx] || null;
+    _draft.round = Math.floor(pickIdx / (_draft.draft.order?.length || 1)) + 1;
+    _draft.pickNumber = pickIdx + 1;
+    // Update position counts for the manager who just picked
+    if (!_draft.mgrPosCounts) _draft.mgrPosCounts = {};
+    if (!_draft.mgrPosCounts[onClock]) _draft.mgrPosCounts[onClock] = {};
+    const pos = player.pos || '?';
+    if (pos !== '?') _draft.mgrPosCounts[onClock][pos] = (_draft.mgrPosCounts[onClock][pos] || 0) + 1;
+    // Update roster view
+    if (!_draft.rosterViews) _draft.rosterViews = {};
+    if (!_draft.rosterViews[onClock]) _draft.rosterViews[onClock] = [];
+    _draft.rosterViews[onClock].push({ mgr: onClock, player: player.name, team: player.team, pos, hr: player.hr || 0 });
+    // Re-render immediately with optimistic state
+    const poolContainer = document.getElementById('draft-pool-scroll-container');
+    const savedScroll = poolContainer?.scrollTop || 0;
+    renderDraftRoom(document.getElementById('tab-body'));
+    requestAnimationFrame(() => {
+      const newContainer = document.getElementById('draft-pool-scroll-container');
+      if (newContainer) newContainer.scrollTop = savedScroll;
+    });
+  }
+
+  // ── SERVER CONFIRM ──
+  // Send to server in background. If rejected, roll back.
   try {
     const r = await fetch(API_DRAFT, {
       method: 'POST',
@@ -2509,9 +2752,19 @@ async function makeDraftPick(leagueId, player) {
       body: JSON.stringify({ action: 'pick', leagueId, pick: { player: player.name, team: player.team, pos: player.pos, hr: player.hr, mlbId: player.id } }),
     });
     const res = await r.json();
-    if (!res.ok) { alert(res.error || 'Pick failed'); return; }
+    if (!res.ok) {
+      // Roll back optimistic update
+      _draft = prevDraft;
+      renderDraftRoom(document.getElementById('tab-body'));
+      alert(res.error || 'Pick failed');
+      return;
+    }
+    // Server confirmed — do a lightweight state sync to get accurate turn/roster
+    // data without refetching the pool (keeps it fast)
     await loadDraftState(document.getElementById('tab-body'));
   } catch (e) {
+    _draft = prevDraft;
+    renderDraftRoom(document.getElementById('tab-body'));
     alert('Connection failed — try again');
   }
 }
@@ -2522,13 +2775,32 @@ async function undoLastDraftPick(leagueId) {
     ? `Undo ${lastPick.mgr}'s pick of ${lastPick.player}? They'll need to pick again.`
     : 'Undo the last pick?';
   if (!confirm(confirmMsg)) return;
+
+  // Optimistic update
+  const prevDraft = JSON.parse(JSON.stringify(_draft));
+  if (_draft.draft?.picks?.length) {
+    const removed = _draft.draft.picks.pop();
+    // Un-draft the player in pool
+    if (_draft.pool) _draft.pool = _draft.pool.map(p =>
+      normName(p.name) === normName(removed.player) ? { ...p, drafted: false, draftedBy: null } : p
+    );
+    if (window._draftFullPool) window._draftFullPool = window._draftFullPool.map(p =>
+      normName(p.name) === normName(removed.player) ? { ...p, drafted: false, draftedBy: null } : p
+    );
+    // Rewind turn
+    const pickIdx = _draft.draft.picks.length;
+    _draft.onClock = _draft.draft.fullOrder?.[pickIdx] || null;
+    _draft.pickNumber = pickIdx + 1;
+    renderDraftRoom(document.getElementById('tab-body'));
+  }
+
   const r = await fetch(API_DRAFT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ action: 'undo', leagueId }),
   });
   const res = await r.json();
-  if (!res.ok) { alert(res.error || 'Undo failed'); return; }
+  if (!res.ok) { _draft = prevDraft; renderDraftRoom(document.getElementById('tab-body')); alert(res.error); return; }
   await loadDraftState(document.getElementById('tab-body'));
 }
 
@@ -2693,20 +2965,50 @@ function renderMySettings(body) {
       </div>
 
       <div class="panel">
-        <div class="panel-header">Your Account</div>
+        <div class="panel-header">Your Profile</div>
         <div class="panel-body">
-          <div class="field">
-            <label>Email</label>
-            <div style="font-family:'Roboto Mono',monospace;font-size:13px;color:var(--text-dim);padding:9px 0">${escapeHtml(SESSION.email)}</div>
+          <!-- Profile photo preview + URL input -->
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:18px;flex-wrap:wrap">
+            <div id="profile-photo-preview" style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.08);border:2px solid var(--panel-border);display:flex;align-items:center;justify-content:center;font-size:28px;overflow:hidden;flex-shrink:0">
+              ${SESSION.photoUrl
+                ? `<img src="${escapeHtml(SESSION.photoUrl)}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentNode.innerHTML='👤'">`
+                : '👤'}
+            </div>
+            <div style="flex:1;min-width:200px">
+              <div class="field" style="margin:0">
+                <label>Profile photo URL</label>
+                <input class="input compact" id="profile-photo-url" type="url"
+                  value="${escapeAttr(SESSION.photoUrl || '')}"
+                  placeholder="https://... paste an image link"
+                  oninput="previewProfilePhoto(this.value)">
+                <div class="input-help">Paste any public image URL — from iCloud, Google Photos, or anywhere. Your photo appears on your league profile.</div>
+              </div>
+            </div>
           </div>
+
           <div class="field">
             <label>Display name</label>
             <div style="display:flex;gap:8px;align-items:center">
               <input class="input compact" id="display-name-input" value="${escapeAttr(SESSION.displayName || '')}" maxlength="40" style="max-width:240px">
-              <button class="btn btn-sm" onclick="saveDisplayName()">Save</button>
             </div>
-            <div class="error" id="display-name-err" style="margin-top:4px"></div>
           </div>
+
+          <!-- HR emoji -->
+          <div class="field">
+            <label>Home run celebration emoji 🎉</label>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <input class="input compact" id="hr-emoji-input" value="${escapeAttr(SESSION.hrEmoji || '🚀')}"
+                maxlength="8" style="max-width:80px;font-size:22px;text-align:center"
+                placeholder="🚀"
+                oninput="const p=document.getElementById('hr-emoji-preview');if(p)p.textContent=this.value||'🚀'">
+              <div style="font-size:12px;color:var(--text-muted);flex:1;min-width:180px">
+                This emoji appears in your push notification when one of your players homers.<br>
+                <span style="color:var(--text-faint)">Preview: <strong id="hr-emoji-preview">${escapeHtml(SESSION.hrEmoji || '🚀')}</strong> Aaron Judge just went yard!</span>
+              </div>
+            </div>
+            <div class="input-help">Pick any emoji — 💣 🔨 🎯 💥 ⚡ 🦅 — or leave as 🚀</div>
+          </div>
+
           ${myManager ? `
           <div class="field">
             <label>Manager name in this league</label>
@@ -2714,8 +3016,15 @@ function renderMySettings(body) {
             <div class="input-help">Manager names are set per league. Ask the commissioner to update it if needed.</div>
           </div>
           ` : ''}
-          <div class="field" style="margin-top:8px">
-            <label>Password</label>
+
+          <div class="field">
+            <label>Email</label>
+            <div style="font-family:'Roboto Mono',monospace;font-size:13px;color:var(--text-faint);padding:4px 0">${escapeHtml(SESSION.email)}</div>
+          </div>
+
+          <div class="error" id="profile-err" style="margin-bottom:8px"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-primary" onclick="saveProfile()">Save profile</button>
             <button class="btn btn-sm btn-ghost" onclick="openChangePassword()">Change password</button>
           </div>
         </div>
@@ -2727,27 +3036,56 @@ function renderMySettings(body) {
   renderNotificationsPanelInto('notif-panel-settings');
 }
 
-async function saveDisplayName() {
-  const err = document.getElementById('display-name-err');
+// Live preview of profile photo as the URL is typed
+function previewProfilePhoto(url) {
+  const preview = document.getElementById('profile-photo-preview');
+  if (!preview) return;
+  if (!url) { preview.innerHTML = '👤'; return; }
+  preview.innerHTML = `<img src="${escapeHtml(url)}" style="width:100%;height:100%;object-fit:cover" onerror="this.parentNode.innerHTML='❌ Invalid image URL'">`;
+}
+
+// Save display name, photo URL, and HR emoji in one call
+async function saveProfile() {
+  const err = document.getElementById('profile-err');
   err.textContent = '';
-  const name = document.getElementById('display-name-input').value.trim();
-  if (!name) { err.textContent = 'Name cannot be empty'; return; }
+  err.style.color = '';
+
+  const displayName = document.getElementById('display-name-input')?.value.trim();
+  const photoUrl    = document.getElementById('profile-photo-url')?.value.trim();
+  const hrEmoji     = document.getElementById('hr-emoji-input')?.value.trim();
+
+  if (displayName !== undefined && !displayName) {
+    err.textContent = 'Display name cannot be empty'; return;
+  }
+
   try {
     const r = await fetch(API_AUTH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ action: 'update-display-name', displayName: name }),
+      body: JSON.stringify({ action: 'update-profile', displayName, photoUrl, hrEmoji }),
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Failed to save'; return; }
-    setSession({ ...SESSION, displayName: name });
+
+    // Update session in memory
+    setSession({
+      ...SESSION,
+      displayName: res.displayName !== undefined ? res.displayName : SESSION.displayName,
+      photoUrl:    res.photoUrl    !== undefined ? res.photoUrl    : SESSION.photoUrl,
+      hrEmoji:     res.hrEmoji     !== undefined ? res.hrEmoji     : SESSION.hrEmoji,
+    });
+
     err.style.color = 'var(--green)';
-    err.textContent = '✓ Saved';
-    setTimeout(() => { err.textContent = ''; err.style.color = ''; }, 2000);
+    err.style.fontWeight = '600';
+    err.textContent = '✓ Profile saved';
+    setTimeout(() => { err.textContent = ''; err.style.color = ''; err.style.fontWeight = ''; }, 3000);
   } catch (e) {
     err.textContent = 'Connection failed';
   }
 }
+
+// Legacy alias — kept for any old onclick references
+async function saveDisplayName() { await saveProfile(); }
 
 function openChangePassword() {
   const wrap = document.createElement('div');
@@ -3264,6 +3602,126 @@ async function setNotifyAll(value) {
   } catch { renderNotificationsPanel(); }
 }
 
+// ── PLAYER PROFILE MODAL ──
+// Opens when any player name is clicked anywhere in the app.
+// Fetches live data from the player endpoint (health, stats, recent games).
+async function openPlayerProfile(playerName, mlbId) {
+  // Remove any existing player modal
+  document.getElementById('player-modal')?.remove();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay open';
+  wrap.id = 'player-modal';
+  wrap.style.zIndex = '200';
+  wrap.onclick = (e) => { if (e.target === wrap) wrap.remove(); };
+  wrap.innerHTML = `
+    <div class="modal" style="max-width:520px;width:100%">
+      <div class="modal-head">
+        <span class="modal-head-title" id="player-modal-title">${escapeHtml(playerName)}</span>
+        <button class="modal-close" onclick="document.getElementById('player-modal').remove()">×</button>
+      </div>
+      <div class="modal-body" id="player-modal-body">
+        <div style="text-align:center;padding:30px;color:var(--text-muted)">Loading…</div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  try {
+    const params = mlbId ? `?id=${mlbId}` : `?name=${encodeURIComponent(playerName)}`;
+    const r = await fetch(API_PLAYER + params, { cache: 'no-store' });
+    const res = await r.json();
+    if (!res.ok) throw new Error(res.error || 'Player not found');
+    const p = res.player;
+
+    const healthColor = p.health === 'IL' ? 'var(--red)' : 'var(--green)';
+    const healthLabel = p.health === 'Active' ? '✓ Active' : `⚠ ${p.health}${p.healthDetail ? ` — ${p.healthDetail}` : ''}`;
+
+    document.getElementById('player-modal-title').textContent = p.name;
+    document.getElementById('player-modal-body').innerHTML = `
+      <!-- Header: name, team, position, health -->
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px">${escapeHtml(p.name)}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <span class="team-chip">${escapeHtml(p.team)}</span>
+            <span class="pos-chip">${escapeHtml(p.pos)}</span>
+            ${p.number ? `<span style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">#${escapeHtml(p.number)}</span>` : ''}
+            ${p.age ? `<span style="font-size:11px;color:var(--text-muted)">Age ${p.age}</span>` : ''}
+          </div>
+          <div style="margin-top:6px">
+            <span style="font-size:12px;font-weight:600;color:${healthColor}">${escapeHtml(healthLabel)}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Season stats -->
+      <div style="margin-bottom:18px">
+        <div style="font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px">${new Date().getFullYear()} Season</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+          ${[
+            { label: 'HR', value: p.season.hr },
+            { label: 'AVG', value: p.season.avg },
+            { label: 'OPS', value: p.season.ops },
+            { label: 'RBI', value: p.season.rbi },
+            { label: 'OBP', value: p.season.obp },
+            { label: 'SLG', value: p.season.slg },
+            { label: 'SB', value: p.season.sb },
+            { label: 'G', value: p.season.games },
+          ].map(s => `
+            <div style="background:rgba(0,0,0,0.3);border:1px solid var(--panel-border);border-radius:6px;padding:8px;text-align:center">
+              <div style="font-family:'Roboto Mono',monospace;font-size:16px;font-weight:700;color:${s.label === 'HR' ? 'var(--accent)' : 'var(--text)'}">${s.value ?? '—'}</div>
+              <div style="font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-top:2px">${s.label}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Recent game log -->
+      ${p.recentGames?.length ? `
+        <div style="margin-bottom:16px">
+          <div style="font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px">Last ${p.recentGames.length} games</div>
+          <div style="overflow-x:auto">
+            <table class="data-table" style="font-size:11px">
+              <thead><tr>
+                <th>Date</th><th>Opp</th>
+                <th class="right">AB</th><th class="right">H</th>
+                <th class="right">HR</th><th class="right">RBI</th>
+                <th class="right">AVG</th>
+              </tr></thead>
+              <tbody>
+                ${p.recentGames.map(g => `
+                  <tr style="${g.hr > 0 ? 'background:rgba(240,199,94,0.06)' : ''}">
+                    <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-muted)">${g.date?.slice(5) || '—'}</td>
+                    <td><span class="team-chip" style="font-size:9px">${escapeHtml(g.opponent)}</span></td>
+                    <td class="right">${g.ab}</td>
+                    <td class="right">${g.hits}</td>
+                    <td class="right" style="font-weight:${g.hr > 0 ? '700' : '400'};color:${g.hr > 0 ? 'var(--accent)' : 'inherit'}">${g.hr || '—'}</td>
+                    <td class="right">${g.rbi || '—'}</td>
+                    <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-muted)">${g.avg}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Footer: MLB.com link -->
+      <div style="padding-top:12px;border-top:1px solid var(--panel-border);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:11px;color:var(--text-faint)">Data from MLB Stats API</span>
+        <a href="${escapeHtml(p.mlbUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost" style="font-size:11px">
+          View full profile on MLB.com ↗
+        </a>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('player-modal-body').innerHTML = `
+      <div class="notice err">Couldn't load player profile: ${escapeHtml(e.message)}</div>
+    `;
+  }
+}
+
 async function syncCurrentLeague() {
   if (!CURRENT_LEAGUE) return;
   setSyncUI('loading', 'Syncing…');
@@ -3278,6 +3736,100 @@ async function syncCurrentLeague() {
     if (res.added > 0) setSyncUI('live', `+${res.added} new HR!`);
   } catch (e) {
     setSyncUI('err', 'Sync failed');
+  }
+}
+
+// ── PUSH NOTIFICATION ONBOARDING PROMPT ──
+// Shows a bottom banner the first time a user opens the app on mobile
+// (or from the PWA Home Screen icon) prompting them to enable notifications.
+// Dismissed state is stored in sessionStorage so it reappears next session
+// (not every page load, but each time they open the app fresh).
+// Only shows if:
+//   - User is signed in
+//   - Push API is available (i.e. on PWA or modern browser)
+//   - Not already subscribed (checked via the push endpoint)
+//   - Not already dismissed this session
+async function maybeShowNotificationPrompt() {
+  if (!SESSION) return;
+  if (sessionStorage.getItem('notif-prompt-dismissed')) return;
+  if (!('PushManager' in window) || !('serviceWorker' in navigator)) return;
+
+  // Check if already subscribed
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (sub) return; // already subscribed — no need to prompt
+  } catch { return; }
+
+  // Already shown this session?
+  if (document.getElementById('notif-prompt-banner')) return;
+
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isMobile = /iphone|ipad|ipod|android/i.test(navigator.userAgent);
+
+  // On iOS not in standalone — can't enable push yet, don't show prompt
+  if (isIOS && !isStandalone) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'notif-prompt-banner';
+  banner.style.cssText = `
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+    background: linear-gradient(135deg, rgba(13,22,41,0.97), rgba(26,47,89,0.97));
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(96,165,250,0.3);
+    padding: 16px 20px; display: flex; align-items: center; gap: 14px;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+    animation: slideUp 0.3s ease;
+  `;
+  banner.innerHTML = `
+    <style>@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }</style>
+    <div style="font-size:26px;flex-shrink:0">🔔</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:2px">Get HR notifications</div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.4">Know the instant one of your players goes yard — before you check the score.</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-shrink:0">
+      <button onclick="dismissNotifPrompt()" style="background:none;border:1px solid rgba(255,255,255,0.15);color:var(--text-muted);border-radius:6px;padding:7px 12px;font-size:12px;cursor:pointer">Later</button>
+      <button onclick="enableNotifFromPrompt()" style="background:var(--blue);color:white;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer">Enable</button>
+    </div>
+  `;
+  document.body.appendChild(banner);
+}
+
+function dismissNotifPrompt() {
+  sessionStorage.setItem('notif-prompt-dismissed', '1');
+  const b = document.getElementById('notif-prompt-banner');
+  if (b) b.remove();
+}
+
+async function enableNotifFromPrompt() {
+  dismissNotifPrompt(); // remove banner first
+  // Navigate to Settings tab where the full notification panel is
+  if (CURRENT_LEAGUE) {
+    navigate(`/league/${encodeURIComponent(CURRENT_LEAGUE.league.id)}/my-settings`);
+  }
+  // Trigger notification permission directly
+  try {
+    const info = await (await fetch(API_PUSH, { headers: authHeaders() })).json();
+    if (!info.publicKey) return;
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(info.publicKey),
+    });
+    await fetch(API_PUSH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'subscribe', subscription: sub.toJSON() }),
+    });
+    // Refresh the settings panel to show updated subscription state
+    if (CURRENT_TAB === 'my-settings') renderNotificationsPanelInto('notif-panel-settings');
+  } catch (e) {
+    console.warn('Notification enable from prompt failed:', e.message);
   }
 }
 
@@ -3319,7 +3871,7 @@ function ordinal(n) { const s = ['th','st','nd','rd']; const v = n % 100; return
       const r = await fetch(API_AUTH, { headers: authHeaders(), cache: 'no-store' });
       const info = await r.json();
       if (!info.me) setSession(null);
-      else if (info.me.isAdmin !== SESSION.isAdmin) setSession({ ...SESSION, isAdmin: info.me.isAdmin });
+      else setSession({ ...SESSION, isAdmin: info.me.isAdmin, displayName: info.me.displayName || SESSION.displayName, photoUrl: info.me.photoUrl || SESSION.photoUrl || '', hrEmoji: info.me.hrEmoji || SESSION.hrEmoji || '' });
     } catch {}
   }
   await renderRoute();
