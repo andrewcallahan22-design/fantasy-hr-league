@@ -1079,6 +1079,26 @@ async function submitNewLeague() {
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Could not create league'; return; }
+
+    // Show a quick share prompt so they can invite people right away
+    // before navigating into the league
+    const inviteUrl = `${location.origin}/join/${res.league.inviteToken}`;
+    const leagueName = res.league.name;
+
+    // Try Web Share immediately — on iPhone this opens the share sheet right away
+    // which is the fastest path to inviting friends. If declined or unavailable,
+    // navigate to the league (they can share from Commissioner tab later).
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Join my Go Yard league',
+          text: `You're invited to join "${leagueName}" on Go Yard — home run fantasy baseball.`,
+          url: inviteUrl,
+        });
+      } catch (e) {
+        // User dismissed — that's fine, just navigate
+      }
+    }
     navigate('/league/' + encodeURIComponent(res.league.id));
   } catch (e) {
     err.textContent = 'Connection failed';
@@ -1279,7 +1299,7 @@ function renderOnboardingChecklist() {
   const steps = [
     { done: hasOtherMembers, title: 'Invite your managers',
       help: 'Share this link. They sign up, you approve them in the Commissioner tab.',
-      action: `<div class="invite-box"><div class="invite-url">${escapeHtml(inviteFull)}</div><button class="btn btn-sm" onclick="copyInvite('${escapeAttr(inviteFull)}')">📋 Copy invite link</button></div>` },
+      action: `<div class="invite-box"><div class="invite-url">${escapeHtml(inviteFull)}</div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" data-share-btn onclick="shareInvite('${escapeAttr(inviteFull)}', '${escapeAttr(league.name)}')">📨 Send invite</button><button class="btn btn-sm btn-ghost" onclick="copyInvite('${escapeAttr(inviteFull)}')">📋 Copy link</button></div></div>` },
     { done: false, title: 'Customize league settings (optional)',
       help: 'Roster size, scoring categories, position and team rules. The defaults match a 6-player monthly HR league.',
       action: `<button class="btn btn-sm" onclick="navigate('/league/${encodeURIComponent(league.id)}/settings')">Open settings</button>` },
@@ -1306,9 +1326,58 @@ function renderOnboardingChecklist() {
   `;
 }
 
+// ── INVITE SHARING ──
+// Uses the Web Share API (native iOS/Android share sheet — iMessage, WhatsApp,
+// email, AirDrop, etc.) when available. Falls back to clipboard copy on desktop.
+async function shareInvite(url, leagueName) {
+  const text = `Join my Go Yard fantasy baseball league "${leagueName}" — ${url}`;
+
+  // Web Share API: available on iPhone (Safari), Android (Chrome), and some
+  // desktop browsers. Opens the native OS share sheet which includes iMessage,
+  // WhatsApp, email, AirDrop, and anything else the user has installed.
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Join my Go Yard league',
+        text: `You're invited to join "${leagueName}" on Go Yard — home run fantasy baseball.`,
+        url,
+      });
+      return; // share sheet opened successfully
+    } catch (e) {
+      // User dismissed the share sheet — that's fine, don't fall through to copy
+      if (e.name === 'AbortError') return;
+      // Other errors: fall through to clipboard copy
+    }
+  }
+
+  // Fallback: clipboard copy (desktop browsers, browsers without Web Share)
+  try {
+    await navigator.clipboard.writeText(url);
+    showInviteCopied();
+  } catch {
+    prompt('Copy this invite link and send it to your league:', url);
+  }
+}
+
+// Briefly shows a "Copied!" confirmation near the share button
+function showInviteCopied() {
+  const toasts = document.querySelectorAll('.invite-copied-toast');
+  toasts.forEach(t => t.remove());
+  const toast = document.createElement('span');
+  toast.className = 'invite-copied-toast';
+  toast.textContent = '✓ Copied!';
+  toast.style.cssText = 'font-size:12px;color:var(--green);margin-left:8px;animation:fadeIn 0.15s ease';
+  // Insert after the share button that was clicked
+  const btn = document.querySelector('[data-share-btn]');
+  if (btn) btn.parentNode.insertBefore(toast, btn.nextSibling);
+  else document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2500);
+}
+
+// Legacy alias — keeps any old onclick="copyInvite(...)" calls working
 async function copyInvite(url) {
-  try { await navigator.clipboard.writeText(url); alert('Invite link copied'); }
-  catch { prompt('Copy this link:', url); }
+  const leagueName = CURRENT_LEAGUE?.league?.name || 'Go Yard League';
+  await shareInvite(url, leagueName);
 }
 
 function renderActiveTab() {
@@ -2486,13 +2555,123 @@ function renderMySettings(body) {
     return;
   }
 
+  // Detect platform so we can show the right install instructions
+  const isIOS        = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isAndroid    = /android/i.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+  let installPanel = '';
+  if (isStandalone) {
+    // Already installed — show a success state
+    installPanel = `
+      <div class="panel">
+        <div class="panel-header">📱 App installed</div>
+        <div class="panel-body">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:22px">✅</span>
+            <div>
+              <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:2px">Go Yard is on your Home Screen</div>
+              <div class="input-help">You're good to go. Push notifications will work from this icon.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (isIOS) {
+    installPanel = `
+      <div class="panel" style="border-color:rgba(96,165,250,0.35)">
+        <div class="panel-header" style="color:var(--blue)">📱 Add to Home Screen (iPhone)</div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
+            Adding Go Yard to your Home Screen gives you a full-screen app experience and enables push notifications for home runs and draft turns.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap the Share button</div>
+                <div class="input-help">The Share button is the box with an arrow pointing up — in Safari's bottom toolbar (iPhone) or top toolbar (iPad).</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap "Add to Home Screen"</div>
+                <div class="input-help">Scroll down in the share sheet until you see "Add to Home Screen" with a plus icon. Tap it.</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap "Add" and open from your Home Screen</div>
+                <div class="input-help">The name will say "Go Yard". Once you open it from the Home Screen icon, come back here to enable push notifications.</div>
+              </div>
+            </div>
+          </div>
+          <div class="notice warn" style="margin-top:14px;margin-bottom:0">
+            ⚠️ Push notifications on iPhone <strong>only work</strong> when you open Go Yard from the Home Screen icon — not from Safari directly.
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (isAndroid) {
+    installPanel = `
+      <div class="panel" style="border-color:rgba(96,165,250,0.35)">
+        <div class="panel-header" style="color:var(--blue)">📱 Add to Home Screen (Android)</div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
+            Install Go Yard as an app for the best experience and push notifications.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap the three-dot menu</div>
+                <div class="input-help">In Chrome, tap the ⋮ menu in the top-right corner of the browser.</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap "Add to Home screen"</div>
+                <div class="input-help">You may also see "Install app" — either works. Tap it and confirm.</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Open from your Home Screen</div>
+                <div class="input-help">Go Yard will appear on your home screen. Open it from there, then enable notifications in this Settings tab.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    // Desktop — still useful to show the install panel for Chromium-based browsers
+    installPanel = `
+      <div class="panel">
+        <div class="panel-header">💻 Install on desktop (optional)</div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--text-dim);margin-bottom:10px">
+            In Chrome or Edge, you can install Go Yard as a desktop app. Look for an install icon (⊕) in the address bar, or go to the browser menu → "Install Go Yard".
+          </p>
+          <div class="input-help">Push notifications work in desktop Chrome and Edge without installing — just enable them in the notifications panel below.</div>
+        </div>
+      </div>
+    `;
+  }
+
   body.innerHTML = `
     <div style="max-width:600px">
+      ${installPanel}
+
       <div class="panel">
         <div class="panel-header">Push Notifications</div>
         <div class="panel-body">
           <p class="input-help" style="margin-bottom:14px">
-            Get notified the moment one of your players homers. Enable notifications on each device you want to receive them.
+            Get notified the moment one of your players homers${isIOS && !isStandalone ? ' — <strong>requires Home Screen install above first</strong>' : ''}. Enable on each device you want to receive them on.
           </p>
           <div id="notif-panel-settings"><p class="input-help">Loading…</p></div>
         </div>
@@ -2738,8 +2917,16 @@ function renderSettings(body) {
           <p class="input-help">Anyone with this link can request to join. You approve each request below.</p>
           <div class="invite-box">
             <div class="invite-url">${escapeHtml(inviteFull)}</div>
-            <button class="btn btn-sm" onclick="copyInvite('${escapeAttr(inviteFull)}')">📋 Copy link</button>
-            <button class="btn btn-sm" onclick="regenInvite()" style="margin-left:6px">Regenerate</button>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+              <button class="btn btn-primary btn-sm" data-share-btn onclick="shareInvite('${escapeAttr(inviteFull)}', '${escapeAttr(league.name)}')">
+                📨 Send invite
+              </button>
+              <button class="btn btn-sm btn-ghost" onclick="copyInvite('${escapeAttr(inviteFull)}')">📋 Copy link</button>
+              <button class="btn btn-sm btn-ghost" onclick="regenInvite()">↺ Regenerate</button>
+            </div>
+            <div class="input-help" style="margin-top:8px">
+              <strong>Send invite</strong> opens your share sheet on iPhone/Android (iMessage, WhatsApp, email, etc). On desktop, copies the link.
+            </div>
           </div>
         </div>
       </div>
@@ -2937,11 +3124,17 @@ async function renameLeague() {
   const name = document.getElementById('rename-input').value.trim();
   if (!name) return;
   const res = await leagueAction('rename', { name });
-  if (res?.ok) await refreshLeague();
+  if (res?.ok) {
+    // Update name in memory immediately — no flash, no double-render
+    CURRENT_LEAGUE.league.name = name;
+    renderLeagueShell(); // rebuilds the whole league shell with the new name in the header
+  }
 }
 async function saveSettings() {
   const err = document.getElementById('settings-err');
   err.textContent = '';
+  err.style.color = '';
+
   const settings = {
     rosterSize: parseInt(document.getElementById('set-rosterSize').value) || 6,
     redraftCadence: document.getElementById('set-redraftCadence').value,
@@ -2950,12 +3143,30 @@ async function saveSettings() {
     multiPlayerPerTeam: document.getElementById('set-multiPlayerPerTeam').value === 'true',
     scoringCategories: [...document.getElementById('set-scoringCategories').selectedOptions].map(o => o.value),
   };
+
   const res = await leagueAction('settings', { settings });
   if (res?.ok) {
-    await refreshLeague();
-    err.style.color = 'var(--green)';
-    err.textContent = '✓ Saved';
-    setTimeout(() => { err.textContent = ''; err.style.color = ''; }, 2000);
+    // Update CURRENT_LEAGUE in memory immediately with the saved settings.
+    // This means the subsequent re-render uses the new values from the start —
+    // no flash to old values, no double-render, no confusion about which is correct.
+    CURRENT_LEAGUE.league.settings = { ...CURRENT_LEAGUE.league.settings, ...settings };
+
+    // Re-render the settings tab once with the updated in-memory state.
+    // We deliberately do NOT call refreshLeague() here because that would
+    // fetch from the server and cause a second re-render (the flash you saw).
+    renderActiveTab();
+
+    // Show a persistent "Saved" banner that stays visible for 4 seconds
+    // so there's no ambiguity about whether the save succeeded.
+    const banner = document.getElementById('settings-err');
+    if (banner) {
+      banner.style.color = 'var(--green)';
+      banner.style.fontWeight = '600';
+      banner.textContent = '✓ Settings saved';
+      setTimeout(() => {
+        if (banner) { banner.textContent = ''; banner.style.color = ''; banner.style.fontWeight = ''; }
+      }, 4000);
+    }
   } else {
     err.textContent = res?.error || 'Failed to save';
   }
