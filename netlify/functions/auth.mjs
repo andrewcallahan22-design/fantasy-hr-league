@@ -46,7 +46,8 @@ export default async (req) => {
         isAdmin:     session.isAdmin,
         displayName: user?.displayName || '',
         photoUrl:    user?.photoUrl    || '',
-        hrEmoji:     user?.hrEmoji     || '',
+        hrEmoji:      user?.hrEmoji      || '',
+        rivalMessage: user?.rivalMessage || '',
       },
     }, { headers: NO_CACHE });
   }
@@ -68,7 +69,7 @@ export default async (req) => {
     const salt = crypto.randomBytes(16).toString('hex');
     await saveUser({ email, displayName, salt, hash: hashPassword(password, salt), createdAt: Date.now(), leagues: [] });
     const token = await createSession(email);
-    return Response.json({ ok: true, token, email, displayName, photoUrl: '', hrEmoji: '', isAdmin: isAdminEmail(email) });
+    return Response.json({ ok: true, token, email, displayName, photoUrl: '', hrEmoji: '', rivalMessage: '', isAdmin: isAdminEmail(email) });
   }
 
   // ── LOGIN ──
@@ -79,7 +80,7 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Wrong email or password' }, { status: 401 });
     }
     const token = await createSession(u.email);
-    return Response.json({ ok: true, token, email: u.email, displayName: u.displayName, photoUrl: u.photoUrl || '', hrEmoji: u.hrEmoji || '', isAdmin: isAdminEmail(u.email) });
+    return Response.json({ ok: true, token, email: u.email, displayName: u.displayName, photoUrl: u.photoUrl || '', hrEmoji: u.hrEmoji || '', rivalMessage: u.rivalMessage || '', isAdmin: isAdminEmail(u.email) });
   }
 
   // ── LOGOUT ──
@@ -170,6 +171,11 @@ export default async (req) => {
       // Limit to a reasonable length — one emoji is typically 1-4 chars
       const emoji = String(body.hrEmoji || '').trim().slice(0, 8);
       updates.hrEmoji = emoji;
+    }
+    if (body.rivalMessage !== undefined) {
+      // Strip HTML tags, cap at 120 chars. Can contain {player} and {manager} tokens.
+      const msg = String(body.rivalMessage || '').trim().replace(/<[^>]*>/g, '').slice(0, 120);
+      updates.rivalMessage = msg;
     }
     await saveUser({ ...user, ...updates });
     return Response.json({ ok: true, ...updates }, { headers: NO_CACHE });

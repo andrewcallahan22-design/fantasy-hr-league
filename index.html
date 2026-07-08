@@ -711,7 +711,7 @@ async function submitAuth() {
     const r = await fetch(API_AUTH, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const res = await r.json();
     if (!res.ok) { errEl.textContent = res.error || 'Something went wrong'; return; }
-    setSession({ token: res.token, email: res.email, displayName: res.displayName, photoUrl: res.photoUrl||'', hrEmoji: res.hrEmoji||'', isAdmin: !!res.isAdmin });
+    setSession({ token: res.token, email: res.email, displayName: res.displayName, photoUrl: res.photoUrl||'', hrEmoji: res.hrEmoji||'', rivalMessage: res.rivalMessage||'', isAdmin: !!res.isAdmin });
     closeAuth();
     if (_authReturnTo) {
       const dest = _authReturnTo;
@@ -850,7 +850,7 @@ async function submitResetPassword(token) {
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Reset failed — the link may have expired'; return; }
-    setSession({ token: res.token, email: res.email, displayName: res.displayName, photoUrl: res.photoUrl||'', hrEmoji: res.hrEmoji||'', isAdmin: !!res.isAdmin });
+    setSession({ token: res.token, email: res.email, displayName: res.displayName, photoUrl: res.photoUrl||'', hrEmoji: res.hrEmoji||'', rivalMessage: res.rivalMessage||'', isAdmin: !!res.isAdmin });
     document.getElementById('reset-form').style.display = 'none';
     document.getElementById('reset-success').style.display = 'block';
     // Clean up the URL
@@ -3132,6 +3132,28 @@ function renderMySettings(body) {
             <div class="input-help">Pick any emoji — 💣 🔨 🎯 💥 ⚡ 🦅 — or leave as 🚀</div>
           </div>
 
+          <!-- Rival notification message -->
+          <div class="field">
+            <label>Trash talk notification 😈</label>
+            <input class="input" id="rival-message-input"
+              value="${escapeAttr(SESSION.rivalMessage || '')}"
+              maxlength="120"
+              placeholder="e.g. 💣 {player} just sent one to the moon!"
+              oninput="updateRivalPreview(this.value)">
+            <div class="input-help">
+              Sent to <em>other managers</em> when your player hits a HR. Use <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px">{player}</code> for the player's name and <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px">{manager}</code> for your team name. Max 120 chars.
+            </div>
+            <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.25);border-radius:6px;border:1px solid var(--panel-border)">
+              <div style="font-size:10px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Preview — what other managers receive:</div>
+              <div id="rival-preview" style="font-size:13px;color:var(--text)">${escapeHtml(
+                (SESSION.rivalMessage || '⚾ {player} homered for {manager}')
+                  .replace(/\{player\}/gi, 'Aaron Judge')
+                  .replace(/\{manager\}/gi, SESSION.displayName || 'Your Team')
+              )}</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px">+1 HR · ${escapeHtml(CURRENT_LEAGUE?.league?.name || 'Your League')}</div>
+            </div>
+          </div>
+
           ${myManager ? `
           <div class="field">
             <label>Manager name in this league</label>
@@ -3159,6 +3181,19 @@ function renderMySettings(body) {
   renderNotificationsPanelInto('notif-panel-settings');
 }
 
+// Live preview of rival notification message
+function updateRivalPreview(template) {
+  const preview = document.getElementById('rival-preview');
+  if (!preview) return;
+  const playerName  = 'Aaron Judge';
+  const managerName = SESSION?.displayName || 'Your Team';
+  const filled = (template || '⚾ {player} homered for {manager}')
+    .replace(/\{player\}/gi, playerName)
+    .replace(/\{manager\}/gi, managerName)
+    .slice(0, 120);
+  preview.textContent = filled;
+}
+
 // Live preview of profile photo as the URL is typed
 function previewProfilePhoto(url) {
   const preview = document.getElementById('profile-photo-preview');
@@ -3173,9 +3208,10 @@ async function saveProfile() {
   err.textContent = '';
   err.style.color = '';
 
-  const displayName = document.getElementById('display-name-input')?.value.trim();
-  const photoUrl    = document.getElementById('profile-photo-url')?.value.trim();
-  const hrEmoji     = document.getElementById('hr-emoji-input')?.value.trim();
+  const displayName  = document.getElementById('display-name-input')?.value.trim();
+  const photoUrl     = document.getElementById('profile-photo-url')?.value.trim();
+  const hrEmoji      = document.getElementById('hr-emoji-input')?.value.trim();
+  const rivalMessage = document.getElementById('rival-message-input')?.value.trim();
 
   if (displayName !== undefined && !displayName) {
     err.textContent = 'Display name cannot be empty'; return;
@@ -3185,7 +3221,7 @@ async function saveProfile() {
     const r = await fetch(API_AUTH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ action: 'update-profile', displayName, photoUrl, hrEmoji }),
+      body: JSON.stringify({ action: 'update-profile', displayName, photoUrl, hrEmoji, rivalMessage }),
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Failed to save'; return; }
@@ -3193,9 +3229,10 @@ async function saveProfile() {
     // Update session in memory
     setSession({
       ...SESSION,
-      displayName: res.displayName !== undefined ? res.displayName : SESSION.displayName,
-      photoUrl:    res.photoUrl    !== undefined ? res.photoUrl    : SESSION.photoUrl,
-      hrEmoji:     res.hrEmoji     !== undefined ? res.hrEmoji     : SESSION.hrEmoji,
+      displayName:  res.displayName  !== undefined ? res.displayName  : SESSION.displayName,
+      photoUrl:     res.photoUrl     !== undefined ? res.photoUrl     : SESSION.photoUrl,
+      hrEmoji:      res.hrEmoji      !== undefined ? res.hrEmoji      : SESSION.hrEmoji,
+      rivalMessage: res.rivalMessage !== undefined ? res.rivalMessage : SESSION.rivalMessage,
     });
 
     err.style.color = 'var(--green)';
@@ -3994,7 +4031,7 @@ function ordinal(n) { const s = ['th','st','nd','rd']; const v = n % 100; return
       const r = await fetch(API_AUTH, { headers: authHeaders(), cache: 'no-store' });
       const info = await r.json();
       if (!info.me) setSession(null);
-      else setSession({ ...SESSION, isAdmin: info.me.isAdmin, displayName: info.me.displayName || SESSION.displayName, photoUrl: info.me.photoUrl || SESSION.photoUrl || '', hrEmoji: info.me.hrEmoji || SESSION.hrEmoji || '' });
+      else setSession({ ...SESSION, isAdmin: info.me.isAdmin, displayName: info.me.displayName || SESSION.displayName, photoUrl: info.me.photoUrl || SESSION.photoUrl || '', hrEmoji: info.me.hrEmoji || SESSION.hrEmoji || '', rivalMessage: info.me.rivalMessage || SESSION.rivalMessage || '' });
     } catch {}
   }
   await renderRoute();

@@ -82,21 +82,35 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
   const { getStore } = await import('@netlify/blobs');
   const userStore = getStore('league');
 
-  async function getHrEmoji(email) {
+  async function getUserProfile(email) {
     try {
-      const user = email ? await userStore.get(`user:${email.toLowerCase()}`, { type: 'json' }) : null;
-      return (user?.hrEmoji?.trim()) || '🚀';
-    } catch { return '🚀'; }
+      return email ? await userStore.get(`user:${email.toLowerCase()}`, { type: 'json' }) : null;
+    } catch { return null; }
+  }
+
+  function getHrEmojiFromProfile(profile) {
+    return (profile?.hrEmoji?.trim()) || '🚀';
+  }
+
+  function getRivalMessageFromProfile(profile, playerName, managerName) {
+    // rivalMessage can contain {player} and {manager} tokens
+    const template = profile?.rivalMessage?.trim();
+    if (!template) return null;
+    return template
+      .replace(/\{player\}/gi, playerName)
+      .replace(/\{manager\}/gi, managerName)
+      .slice(0, 120); // cap length
   }
 
   // ── HR events ──
   for (const ev of hrEvents) {
     const tag = hrTag(league.id, ev);
     const ownerEmail = emailForManager(league, ev.mgr);
+    const ownerProfile = await getUserProfile(ownerEmail);
+    const hrEmoji = getHrEmojiFromProfile(ownerProfile);
 
     // Owner gets celebratory push with their custom emoji
     if (ownerEmail) {
-      const hrEmoji = await getHrEmoji(ownerEmail);
       enqueue(ownerEmail, JSON.stringify({
         title: `${hrEmoji} ${ev.player} just went yard!`,
         body: `+${ev.delta} HR for YOUR team · ${league.name}`,
@@ -105,16 +119,19 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
       }), tag);
     }
 
-    // Others with notifyAll get factual push (different tag prefix so it
-    // doesn't stomp the owner's celebration push on shared devices)
+    // Others with notifyAll get the owner's custom rival message if set,
+    // otherwise fall back to a factual notification
+    const rivalMsg = getRivalMessageFromProfile(ownerProfile, ev.player, ev.mgr);
     for (const member of (league.members || [])) {
       if (member.status !== 'active' || !member.email) continue;
       const email = member.email.toLowerCase();
       if (email === ownerEmail) continue;
       if (!allPrefs[email]?.notifyAll) continue;
       enqueue(email, JSON.stringify({
-        title: `⚾ ${ev.player} homered`,
-        body: `+${ev.delta} for ${ev.mgr}'s roster · ${league.name}`,
+        title: rivalMsg
+          ? rivalMsg
+          : `⚾ ${ev.player} homered for ${ev.mgr}`,
+        body: `+${ev.delta} HR · ${league.name}`,
         tag: `other-${tag}`,
         url: `/league/${league.id}`,
       }), `other-${tag}`);
