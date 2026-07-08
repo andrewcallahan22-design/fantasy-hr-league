@@ -92,22 +92,23 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
     return (profile?.hrEmoji?.trim()) || '🚀';
   }
 
-  function getRivalMessageFromProfile(profile, playerName, managerName) {
-    // rivalMessage can contain {player} and {manager} tokens
-    const template = profile?.rivalMessage?.trim();
+  function getRivalMessageFromProfile(profile, member, playerName, managerName) {
+    // Per-league message takes priority over account-level message
+    const template = (member?.rivalMessage?.trim()) || (profile?.rivalMessage?.trim());
     if (!template) return null;
     return template
       .replace(/\{player\}/gi, playerName)
       .replace(/\{manager\}/gi, managerName)
-      .slice(0, 120); // cap length
+      .slice(0, 120);
   }
 
   // ── HR events ──
   for (const ev of hrEvents) {
     const tag = hrTag(league.id, ev);
-    const ownerEmail = emailForManager(league, ev.mgr);
+    const ownerEmail   = emailForManager(league, ev.mgr);
     const ownerProfile = await getUserProfile(ownerEmail);
-    const hrEmoji = getHrEmojiFromProfile(ownerProfile);
+    const ownerMember  = (league.members || []).find(m => m.email?.toLowerCase() === ownerEmail?.toLowerCase());
+    const hrEmoji      = getHrEmojiFromProfile(ownerProfile);
 
     // Owner gets celebratory push with their custom emoji
     if (ownerEmail) {
@@ -121,7 +122,7 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
 
     // Others with notifyAll get the owner's custom rival message if set,
     // otherwise fall back to a factual notification
-    const rivalMsg = getRivalMessageFromProfile(ownerProfile, ev.player, ev.mgr);
+    const rivalMsg = getRivalMessageFromProfile(ownerProfile, ownerMember, ev.player, ev.mgr);
     for (const member of (league.members || [])) {
       if (member.status !== 'active' || !member.email) continue;
       const email = member.email.toLowerCase();

@@ -3135,23 +3135,53 @@ function renderMySettings(body) {
           <!-- Rival notification message -->
           <div class="field">
             <label>Trash talk notification 😈</label>
-            <input class="input" id="rival-message-input"
-              value="${escapeAttr(SESSION.rivalMessage || '')}"
-              maxlength="120"
-              placeholder="e.g. 💣 {player} just sent one to the moon!"
-              oninput="updateRivalPreview(this.value)">
-            <div class="input-help">
-              Sent to <em>other managers</em> when your player hits a HR. Use <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px">{player}</code> for the player's name and <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px">{manager}</code> for your team name. Max 120 chars.
-            </div>
-            <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.25);border-radius:6px;border:1px solid var(--panel-border)">
-              <div style="font-size:10px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Preview — what other managers receive:</div>
-              <div id="rival-preview" style="font-size:13px;color:var(--text)">${escapeHtml(
-                (SESSION.rivalMessage || '⚾ {player} homered for {manager}')
-                  .replace(/\{player\}/gi, 'Aaron Judge')
-                  .replace(/\{manager\}/gi, SESSION.displayName || 'Your Team')
-              )}</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:2px">+1 HR · ${escapeHtml(CURRENT_LEAGUE?.league?.name || 'Your League')}</div>
-            </div>
+            ${(() => {
+              // Find this manager's per-league message from the member record
+              const myMember = (league.members || []).find(m => m.email?.toLowerCase() === SESSION.email?.toLowerCase());
+              const leagueMsg = myMember?.rivalMessage ?? null;
+              // Display: league-specific if set, else account default, else empty
+              const displayVal = leagueMsg !== null ? leagueMsg : (SESSION.rivalMessage || '');
+              const hasLeagueOverride = leagueMsg !== null && leagueMsg !== '';
+              const hasAccountDefault = SESSION.rivalMessage;
+              return `
+                ${hasLeagueOverride ? `
+                  <div style="font-size:11px;color:var(--green);margin-bottom:6px">✓ Custom message set for <strong>${escapeHtml(league.name)}</strong></div>
+                ` : hasAccountDefault ? `
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Using your default message — you can set a custom one for this league below</div>
+                ` : ''}
+                <input class="input" id="rival-message-input"
+                  value="${escapeAttr(displayVal)}"
+                  maxlength="120"
+                  placeholder="e.g. 💣 {player} just sent one to the moon!"
+                  oninput="updateRivalPreview(this.value)">
+                <div class="input-help">
+                  Sent to <em>other managers</em> when your player hits a HR. Use <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px">{player}</code> and <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px">{manager}</code> as tokens. Max 120 chars.
+                </div>
+                <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.25);border-radius:6px;border:1px solid var(--panel-border)">
+                  <div style="font-size:10px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Preview — what other managers receive:</div>
+                  <div id="rival-preview" style="font-size:13px;color:var(--text)">${escapeHtml(
+                    (displayVal || '⚾ {player} homered for {manager}')
+                      .replace(/\{player\}/gi, 'Aaron Judge')
+                      .replace(/\{manager\}/gi, myManager || SESSION.displayName || 'Your Team')
+                  )}</div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:2px">+1 HR · ${escapeHtml(league.name)}</div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+                  <button class="btn btn-sm btn-primary" onclick="saveRivalMessage(false)">
+                    Save for ${escapeHtml(league.name)} only
+                  </button>
+                  <button class="btn btn-sm btn-ghost" onclick="saveRivalMessage(true)">
+                    Apply to all my leagues
+                  </button>
+                  ${hasLeagueOverride ? `
+                    <button class="btn btn-sm btn-ghost" style="color:var(--text-faint)" onclick="clearLeagueRivalMessage()">
+                      Clear league override
+                    </button>
+                  ` : ''}
+                </div>
+                <div class="error" id="rival-msg-err" style="margin-top:6px"></div>
+              `;
+            })()}
           </div>
 
           ${myManager ? `
@@ -3179,6 +3209,71 @@ function renderMySettings(body) {
 
   // Render the notification panel into the settings tab
   renderNotificationsPanelInto('notif-panel-settings');
+}
+
+// Save rival message — either for this league only, or apply to all leagues
+async function saveRivalMessage(applyToAll) {
+  const err = document.getElementById('rival-msg-err');
+  if (err) { err.textContent = ''; err.style.color = ''; }
+  const msg = document.getElementById('rival-message-input')?.value.trim() || '';
+  const leagueId = CURRENT_LEAGUE?.league?.id;
+  if (!leagueId) return;
+
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'set-rival-message', leagueId, rivalMessage: msg, applyToAll }),
+    });
+    const res = await r.json();
+    if (!res.ok) { if (err) err.textContent = res.error || 'Failed to save'; return; }
+
+    // Update session account-level if applying to all
+    if (applyToAll) setSession({ ...SESSION, rivalMessage: msg });
+
+    // Update local league member record so the UI re-renders correctly
+    const myMember = (CURRENT_LEAGUE.league.members || []).find(m =>
+      m.email?.toLowerCase() === SESSION.email?.toLowerCase()
+    );
+    if (myMember) myMember.rivalMessage = msg;
+
+    if (err) {
+      err.style.color = 'var(--green)';
+      err.style.fontWeight = '600';
+      err.textContent = applyToAll ? '✓ Applied to all your leagues' : `✓ Saved for ${CURRENT_LEAGUE.league.name}`;
+      setTimeout(() => { if (err) { err.textContent = ''; err.style.color = ''; err.style.fontWeight = ''; } }, 3000);
+    }
+    // Re-render settings so the override indicator updates
+    renderActiveTab();
+  } catch (e) {
+    if (err) err.textContent = 'Connection failed';
+  }
+}
+
+// Clear the league-specific override, reverting to account default
+async function clearLeagueRivalMessage() {
+  const err = document.getElementById('rival-msg-err');
+  if (err) { err.textContent = ''; err.style.color = ''; }
+  const leagueId = CURRENT_LEAGUE?.league?.id;
+  if (!leagueId) return;
+
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'set-rival-message', leagueId, rivalMessage: null }),
+    });
+    const res = await r.json();
+    if (!res.ok) { if (err) err.textContent = res.error || 'Failed'; return; }
+
+    const myMember = (CURRENT_LEAGUE.league.members || []).find(m =>
+      m.email?.toLowerCase() === SESSION.email?.toLowerCase()
+    );
+    if (myMember) delete myMember.rivalMessage;
+    renderActiveTab();
+  } catch (e) {
+    if (err) err.textContent = 'Connection failed';
+  }
 }
 
 // Live preview of rival notification message
@@ -3211,7 +3306,6 @@ async function saveProfile() {
   const displayName  = document.getElementById('display-name-input')?.value.trim();
   const photoUrl     = document.getElementById('profile-photo-url')?.value.trim();
   const hrEmoji      = document.getElementById('hr-emoji-input')?.value.trim();
-  const rivalMessage = document.getElementById('rival-message-input')?.value.trim();
 
   if (displayName !== undefined && !displayName) {
     err.textContent = 'Display name cannot be empty'; return;
@@ -3221,7 +3315,7 @@ async function saveProfile() {
     const r = await fetch(API_AUTH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ action: 'update-profile', displayName, photoUrl, hrEmoji, rivalMessage }),
+      body: JSON.stringify({ action: 'update-profile', displayName, photoUrl, hrEmoji }),
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Failed to save'; return; }

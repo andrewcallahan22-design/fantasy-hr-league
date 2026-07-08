@@ -436,6 +436,29 @@ export default async (req) => {
     return Response.json({ ok: true, month: newMonthKey }, { headers: NO_CACHE });
   }
 
+  // ── SET RIVAL MESSAGE (per-league trash talk) ──
+  // Stores the manager's custom rival notification message on their member
+  // record in this specific league. Separate from the global account setting.
+  if (body.action === 'set-rival-message') {
+    const msg = String(body.rivalMessage || '').trim().replace(/<[^>]*>/g, '').slice(0, 120);
+    const slot = (league.members || []).find(m =>
+      m.email?.toLowerCase() === session.email.toLowerCase()
+    );
+    if (!slot) return Response.json({ ok: false, error: 'You are not a member of this league' }, { status: 403 });
+    slot.rivalMessage = msg;
+    await saveLeague(league);
+
+    // If applyToAll is set, also update the message on the user's account
+    // so it becomes the default for all leagues that don't have a specific override
+    if (body.applyToAll) {
+      const { getUser, saveUser } = await import('./lib/storage.mjs');
+      const user = await getUser(session.email);
+      if (user) await saveUser({ ...user, rivalMessage: msg });
+    }
+
+    return Response.json({ ok: true, rivalMessage: msg }, { headers: NO_CACHE });
+  }
+
   return Response.json({ ok: false, error: 'Unknown action' }, { status: 400 });
 };
 
