@@ -1544,10 +1544,56 @@ function nextGameBadge(ng) {
 }
 
 function renderScoreboard(body) {
-  const { league } = CURRENT_LEAGUE;
+  const { league, isCommish } = CURRENT_LEAGUE;
   const key = league.currentMonth;
   const month = league.months?.[key];
-  if (!month) { body.innerHTML = '<div class="empty-state"><div class="empty-state-title">No active month</div></div>'; return; }
+
+  // ── NO ACTIVE MONTH YET (brand new league, pre-draft) ──
+  if (!month) {
+    const s = league.settings || {};
+    body.innerHTML = `
+      <div style="max-width:680px">
+        ${isCommish ? `
+          <div class="panel" style="border-color:rgba(240,199,94,0.3);margin-bottom:16px">
+            <div class="panel-header" style="color:var(--accent)">👋 Welcome to Go Yard, Commissioner!</div>
+            <div class="panel-body">
+              <p style="font-size:14px;color:var(--text-dim);line-height:1.6;margin-bottom:14px">
+                <strong style="color:var(--text)">Go Yard</strong> is a home run-only fantasy baseball league. Simple rule: whoever's players hit the most home runs wins the month. No batting averages, no pitching, no waiver wire — just dingers.
+              </p>
+              <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+                ${[
+                  ['📋', 'Set up your league rules', 'Go to the Commissioner tab → League Rules. Set roster size (how many players each team drafts), position rules, and team rules.'],
+                  ['📨', 'Invite your managers', 'Share the invite link from the Commissioner tab. Managers sign up and you approve them.'],
+                  ['🏈', 'Open the draft', 'Once everyone\'s in, open the draft from the Draft tab. Each manager picks their hitters.'],
+                  ['⚾', 'Track home runs', 'Stats sync automatically every minute from the official MLB feed. Your players hit a HR, everyone knows instantly.'],
+                ].map(([icon, title, desc]) => `
+                  <div style="display:flex;gap:12px;align-items:flex-start">
+                    <span style="font-size:20px;flex-shrink:0;margin-top:1px">${icon}</span>
+                    <div>
+                      <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:2px">${title}</div>
+                      <div style="font-size:12px;color:var(--text-muted);line-height:1.5">${desc}</div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+              <button class="btn btn-primary" onclick="navigate('/league/${escapeAttr(league.id)}/settings')">Go to Commissioner tab →</button>
+            </div>
+          </div>
+        ` : `
+          <div class="panel" style="margin-bottom:16px">
+            <div class="panel-header">⚾ Welcome to ${escapeHtml(league.name)}!</div>
+            <div class="panel-body">
+              <p style="font-size:14px;color:var(--text-dim);line-height:1.6">
+                This is a <strong style="color:var(--text)">home run-only</strong> fantasy baseball league — whoever's players hit the most home runs wins. No pitching, no batting average, just dingers. The commissioner is still setting things up. Check back soon!
+              </p>
+            </div>
+          </div>
+        `}
+        ${renderLeagueRulesCard(league, isCommish)}
+      </div>
+    `;
+    return;
+  }
 
   const totals = league.managers.map(m => ({
     manager: m,
@@ -1669,7 +1715,84 @@ function renderScoreboard(body) {
       </div>
     `;
   }
-  body.innerHTML = html;
+  body.innerHTML = html + renderLeagueRulesCard(league, CURRENT_LEAGUE.isCommish);
+}
+
+// ── LEAGUE RULES CARD ──
+// Translates the raw league settings into plain English that any manager
+// can understand. Shown on the scoreboard so it's always visible.
+function renderLeagueRulesCard(league, isCommish) {
+  const s = league.settings || {};
+  const rosterSize  = s.rosterSize || 6;
+  const posRule     = s.positionRule || 'one-duplicate-allowed';
+  const teamRule    = s.teamRule || 'all-unique';
+  const cadence     = s.redraftCadence || 'monthly';
+  const positions   = (s.positionsAllowed || []);
+
+  // Plain-English translations
+  const posRuleText = posRule === 'all-unique'
+    ? `each position can only appear <strong>once</strong> on your roster`
+    : posRule === 'unrestricted'
+      ? `you can pick <strong>any combination</strong> of positions`
+      : `you can have <strong>up to 2 players at the same position</strong>`;
+
+  const teamRuleText = teamRule === 'all-unique'
+    ? `each MLB team can only be represented <strong>once across the entire league</strong> — if someone picks a Yankee, no other manager can pick any Yankee`
+    : teamRule === 'unrestricted'
+      ? `<strong>no restrictions</strong> on MLB team — multiple managers can pick players from the same team`
+      : `each manager can have <strong>one player per MLB team</strong>`;
+
+  const cadenceText = cadence === 'monthly'
+    ? 're-draft at the start of each month'
+    : cadence === 'season'
+      ? 'keep your roster for the entire season'
+      : cadence;
+
+  const positionsText = positions.length
+    ? positions.join(', ')
+    : 'C, 1B, 2B, 3B, SS, OF, RF, CF, LF, DH, SP, RP';
+
+  const rules = [
+    { icon: '⚾', label: 'How you score', text: 'Home runs only. Every HR hit by a player on your roster earns your team 1 point. Nothing else counts.' },
+    { icon: '👥', label: 'Roster size', text: `Each manager drafts <strong>${rosterSize} players</strong>.` },
+    { icon: '🏟️', label: 'Eligible positions', text: `You can draft players at these positions: <strong>${escapeHtml(positionsText)}</strong>.` },
+    { icon: '📐', label: 'Position rule', text: `When building your roster, ${posRuleText}.` },
+    { icon: '🧢', label: 'Team rule', text: `${teamRuleText}.` },
+    { icon: '📅', label: 'Draft schedule', text: `Rosters ${cadenceText === 'monthly' ? 're-draft at the start of each month' : cadenceText}. The manager with the most HRs wins each month.` },
+    { icon: '📊', label: 'Stats source', text: 'Home run totals sync automatically every minute from the official MLB Stats API — no manual entry needed.' },
+  ];
+
+  return `
+    <details style="margin-top:16px" ${!league.months || !Object.keys(league.months).length ? 'open' : ''}>
+      <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--panel);border:1px solid var(--panel-border);border-radius:var(--radius-lg);user-select:none">
+        <span style="font-size:16px">📖</span>
+        <span style="font-weight:600;font-size:13px;color:var(--text)">How this league works</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">tap to ${!league.months || !Object.keys(league.months).length ? 'hide' : 'expand'}</span>
+      </summary>
+      <div style="background:var(--panel);border:1px solid var(--panel-border);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);padding:16px">
+        <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px;line-height:1.6">
+          <strong style="color:var(--text)">${escapeHtml(league.name)}</strong> is a home run-only fantasy baseball league. Here's everything you need to know:
+        </p>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${rules.map(r => `
+            <div style="display:flex;gap:12px;align-items:flex-start;padding-bottom:12px;border-bottom:1px dashed var(--panel-border)">
+              <span style="font-size:18px;flex-shrink:0;width:24px;text-align:center">${r.icon}</span>
+              <div>
+                <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:3px">${r.label}</div>
+                <div style="font-size:13px;color:var(--text-dim);line-height:1.5">${r.text}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        ${isCommish ? `
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--panel-border)">
+            <span style="font-size:11px;color:var(--text-faint)">Commissioner: </span>
+            <button onclick="navigate('/league/${escapeAttr(league.id)}/settings')" class="btn btn-sm btn-ghost" style="font-size:11px">Edit league rules</button>
+          </div>
+        ` : ''}
+      </div>
+    </details>
+  `;
 }
 
 // ── STANDINGS ──
