@@ -12,11 +12,12 @@
 import {
   loadLeague, saveLeague, listLeagues, addLeagueToIndex,
   newLeagueId, newInviteToken, ensureLegacyMigrated,
-  makeBlankSettings,
+  makeBlankSettings, getUser, saveUser,
 } from './lib/storage.mjs';
 import {
   verifyAuth, managerForUser, isCommissioner,
 } from './lib/auth.mjs';
+import { normName } from './lib/core.mjs';
 
 const NO_CACHE = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
@@ -405,7 +406,6 @@ export default async (req) => {
           league.changeLog.push({ t: Date.now(), player: slot.player || '?', delta: newVal - before, mgr: targetMgr, month: cm, src: 'manual' });
           if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
           // Move baseline so next sync doesn't re-add the same HRs
-          const { normName } = await import('./lib/core.mjs');
           const nk = normName(slot.player || '');
           if (nk && league.seasonHints?.[nk] !== undefined && league.seasonBaseline?.[nk] !== undefined) {
             league.seasonBaseline[nk] = league.seasonHints[nk] - newVal;
@@ -415,7 +415,6 @@ export default async (req) => {
         slot[edit.field] = String(edit.value || '');
         if (edit.field === 'player') {
           // Reset baseline so a new player anchors cleanly on next sync
-          const { normName } = await import('./lib/core.mjs');
           const nk = normName(slot.player || '');
           if (nk && league.seasonBaseline) delete league.seasonBaseline[nk];
         }
@@ -538,9 +537,9 @@ export default async (req) => {
     if (!slot?.player) return Response.json({ ok: false, error: 'No player in that slot' }, { status: 400 });
 
     // Verify player is actually injured (health must contain IL or similar)
-    const { normName } = await import('./lib/core.mjs');
     const nk = normName(slot.player);
-    const health = league.health?.[nk] || '';
+    const healthObj = league.health?.[nk];
+    const health = typeof healthObj === 'string' ? healthObj : (healthObj?.status || healthObj?.code || '');
     const isHurt = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') ||
                    health.toLowerCase().includes('day') || body.forceCommish;
     if (!isHurt && !isCommissioner(league, session.email) && !session.isAdmin) {
@@ -625,7 +624,6 @@ export default async (req) => {
     if (!pickupPlayer) return Response.json({ ok: false, error: 'Must specify a player to pick up' }, { status: 400 });
 
     // Verify the player isn't already on any roster this month
-    const { normName } = await import('./lib/core.mjs');
     const pickupNorm = normName(pickupPlayer);
     for (const [mgrName, mgrRoster] of Object.entries(league.months[cm].rosters || {})) {
       const taken = mgrRoster.some(s => normName(s.player || '') === pickupNorm || normName(s.irPlayer || '') === pickupNorm);
@@ -686,7 +684,6 @@ export default async (req) => {
     // If applyToAll is set, also update the message on the user's account
     // so it becomes the default for all leagues that don't have a specific override
     if (body.applyToAll) {
-      const { getUser, saveUser } = await import('./lib/storage.mjs');
       const user = await getUser(session.email);
       if (user) await saveUser({ ...user, rivalMessage: msg });
     }

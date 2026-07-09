@@ -2369,10 +2369,13 @@ function renderRostersEdit(body) {
               ${roster.map((p, i) => {
                 const hasIRPlayer  = !!p.irPlayer;
                 const playerName   = hasIRPlayer ? p.irPlayer : (p.player || '');
-                const health       = p.irPlayer
-                  ? (league.health?.[normNameFE(p.irPlayer)] || '')
-                  : (league.health?.[normNameFE(p.player)] || '');
-                const isIL         = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
+                const healthObj = p.irPlayer
+                  ? (league.health?.[normNameFE(p.irPlayer)])
+                  : (league.health?.[normNameFE(p.player)]);
+                const health = typeof healthObj === 'string'
+                  ? healthObj
+                  : (healthObj?.status || healthObj?.code || '');
+                const isIL = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
                 const canMoveToIR  = canUseIR && !hasIRPlayer && p.player && isIL && irCount < irSlots;
                 const canReturn    = canUseIR && hasIRPlayer;
 
