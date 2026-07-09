@@ -4072,13 +4072,17 @@ async function renderNotificationsPanelInto(elementId) {
       </button>
     </div>
     ${subscribed ? `
-      <label style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:rgba(0,0,0,0.25);border-radius:6px;cursor:pointer">
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:rgba(0,0,0,0.25);border-radius:6px;cursor:pointer;margin-bottom:10px">
         <input type="checkbox" id="notify-all-${elementId}" ${info.notifyAll ? 'checked' : ''} onchange="setNotifyAll(this.checked)" style="margin-top:3px;width:16px;height:16px;accent-color:var(--blue)">
         <div>
           <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:3px">Notify me on every league HR</div>
-          <div class="input-help">Your own players get a celebration 🚀. Others get a quick factual update. Quiet hours 11 PM – 9 AM PT apply to all notifications.</div>
+          <div class="input-help">Your own players get a celebration 🚀. Others get a quick factual update. Quiet hours midnight – 8 AM PT apply.</div>
         </div>
       </label>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" onclick="sendTestNotification('${elementId}')">🔔 Send test notification</button>
+        <div id="test-notif-result-${elementId}" style="font-size:12px;color:var(--text-muted)"></div>
+      </div>
     ` : `
       <p class="input-help">Each device subscribes separately. Enable on your phone AND your laptop if you want both.</p>
     `}
@@ -4092,6 +4096,30 @@ function urlBase64ToUint8Array(base64String) {
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(base64);
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function sendTestNotification(elementId) {
+  const resultEl = document.getElementById(`test-notif-result-${elementId}`);
+  if (resultEl) resultEl.textContent = 'Sending…';
+  try {
+    const r = await fetch(API_PUSH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'send-test' }),
+    });
+    const res = await r.json();
+    if (!res.ok) {
+      if (resultEl) { resultEl.textContent = '❌ ' + (res.error || 'Failed'); resultEl.style.color = 'var(--red)'; }
+      return;
+    }
+    if (res.sent > 0) {
+      if (resultEl) { resultEl.textContent = `✓ Sent to ${res.sent} device(s) — check for a notification!`; resultEl.style.color = 'var(--green)'; }
+    } else {
+      if (resultEl) { resultEl.textContent = `❌ 0 delivered (${res.dead} dead subscription(s) pruned — try disabling and re-enabling notifications)`; resultEl.style.color = 'var(--orange)'; }
+    }
+  } catch (e) {
+    if (resultEl) { resultEl.textContent = 'Connection failed'; resultEl.style.color = 'var(--red)'; }
+  }
 }
 
 async function enableNotificationsFor(elementId) {
