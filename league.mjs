@@ -382,13 +382,14 @@ export default async (req) => {
   // The frontend posts a "delta" — slot edits keyed by manager + slotIndex.
   // We accept the change only if the user is allowed to edit that manager's roster.
   if (body.action === 'save-state') {
+    // Only commissioners and admins can edit rosters or HR counts.
+    // Regular managers have read-only access — the sync handles HR tracking automatically.
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can edit rosters' }, { status: 403 });
+    }
     const edits = body.edits || []; // array of { manager, slotIndex, field, value }
     for (const edit of edits) {
       const targetMgr = edit.manager;
-      const targetEmail = (league.members || []).find(m => m.manager === targetMgr)?.email;
-      const allowedOwn = session.email === targetEmail?.toLowerCase();
-      const allowedCommish = isCommissioner(league, session.email);
-      if (!allowedOwn && !allowedCommish && !session.isAdmin) continue; // silently skip unauthorized edits
 
       const cm = body.month || league.currentMonth;
       if (!league.months[cm]?.rosters?.[targetMgr]) continue;

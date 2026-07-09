@@ -2307,11 +2307,22 @@ function monthSortKey(key) {
 
 
 function renderRostersEdit(body) {
-  const { league } = CURRENT_LEAGUE;
+  const { league, isCommish } = CURRENT_LEAGUE;
   const key = league.currentMonth;
   const month = league.months?.[key];
   if (!month) return;
-  let html = `<p class="page-subtitle">Editing ${key} rosters. ${SESSION ? (CURRENT_LEAGUE.isCommish ? 'As commissioner, you can edit every roster.' : 'You can edit your own roster.') : 'Sign in to edit.'}</p>`;
+
+  let html = '';
+  if (isCommish || SESSION?.isAdmin) {
+    html += `<p class="page-subtitle">Editing ${escapeHtml(key)} rosters. Changes are logged and override the auto-sync baseline.</p>`;
+  } else {
+    html += `
+      <div class="notice info" style="margin-bottom:16px">
+        🔒 Rosters are managed by the commissioner. The sync automatically tracks home runs — no manual editing needed.
+      </div>
+      <p class="page-subtitle">${escapeHtml(key)} rosters — read only</p>
+    `;
+  }
   for (const mgr of league.managers) {
     const editable = canEditMgrRoster(mgr);
     html += `
