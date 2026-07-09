@@ -2322,108 +2322,157 @@ function monthSortKey(key) {
 
 function renderRostersEdit(body) {
   const { league, isCommish, myManager } = CURRENT_LEAGUE;
-  const key = league.currentMonth;
-  const month = league.months?.[key];
-  if (!month) { body.innerHTML = '<div class="empty-state"><div class="empty-state-title">No active month</div></div>'; return; }
+  const isAdmin    = SESSION?.isAdmin;
+  const irSlots    = parseInt(league.settings?.irSlots) || 0;
+  const waiverType = league.settings?.waiverType || 'none';
+  const allMonths  = Object.keys(league.months || {}).sort((a,b) => {
+    // Sort months chronologically
+    const parse = m => { const [mo,yr] = m.split('-'); const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December']; return parseInt(yr)*12+MONTHS.indexOf(mo); };
+    return parse(b) - parse(a); // newest first
+  });
+  const currentMonth = league.currentMonth;
 
-  const irSlots      = parseInt(league.settings?.irSlots) || 0;
-  const waiverType   = league.settings?.waiverType || 'none';
-  const isAdmin      = SESSION?.isAdmin;
+  // Which manager to show — own roster by default, commissioner can pick any
+  const viewMgr = body._viewMgr || myManager || (isCommish || isAdmin ? league.managers[0] : null);
+  const viewMonth = body._viewMonth || currentMonth;
 
-  let html = '';
-
-  // Header info
-  if (isCommish || isAdmin) {
-    html += `<p class="page-subtitle">Commissioner view — edit any roster. IR and waiver moves logged automatically.</p>`;
-  } else {
-    html += `<p class="page-subtitle">${escapeHtml(key)} rosters`;
-    if (irSlots) html += ` · ${irSlots} IR slot${irSlots>1?'s':''} enabled`;
-    if (waiverType !== 'none') html += ` · Waiver wire: ${waiverType === 'free-agent' ? 'free agent' : 'waiver order'}`;
-    html += `</p>`;
+  if (!viewMgr) {
+    body.innerHTML = `<div class="notice info">You don't have a roster in this league yet. You'll need to be approved and complete the draft first.</div>`;
+    return;
   }
 
-  for (const mgr of league.managers) {
-    const editable    = isCommish || isAdmin;
-    const isMyRoster  = mgr === myManager;
-    const roster      = month.rosters[mgr] || [];
-    const irCount     = roster.filter(s => s.irPlayer).length;
-    const canUseIR    = irSlots > 0 && (isMyRoster || editable);
-    const canWaiver   = waiverType !== 'none' && (isMyRoster || editable);
+  const month = league.months?.[viewMonth];
+  const roster = month?.rosters?.[viewMgr] || [];
+  const irCount = roster.filter(s => s.irPlayer).length;
+  const isCurrentMonth = viewMonth === currentMonth;
+  const canEdit = isCurrentMonth && (viewMgr === myManager || isCommish || isAdmin);
 
-    html += `
-      <div class="panel" style="margin-bottom:14px">
-        <div class="panel-header" style="justify-content:space-between">
-          <span>${escapeHtml(mgr)}${isMyRoster ? ' <span class="team-chip" style="background:rgba(240,199,94,0.15);color:var(--accent)">You</span>' : ''}</span>
-          ${irSlots ? `<span style="font-size:11px;color:var(--text-muted)">IR: ${irCount}/${irSlots} used</span>` : ''}
+  // Month total HR (including IR HRs)
+  const totalHR = roster.reduce((s, p) => s + (parseInt(p.irHr)||0) + (parseInt(p.hr)||0), 0);
+
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+      <div>
+        <div style="font-size:22px;font-weight:800;color:var(--text)">${escapeHtml(viewMgr)}</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:2px">
+          ${escapeHtml(viewMonth)} · <strong style="color:var(--accent)">${totalHR} HR</strong>
+          ${irSlots ? ` · IR: ${irCount}/${irSlots}` : ''}
         </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${allMonths.length > 1 ? `
+          <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderRostersWithOptions(body, '${escapeAttr(viewMgr)}', this.value)">
+            ${allMonths.map(m => `<option value="${escapeAttr(m)}" ${m===viewMonth?'selected':''}>${escapeHtml(m)}${m===currentMonth?' (current)':''}</option>`).join('')}
+          </select>
+        ` : ''}
+        ${(isCommish || isAdmin) && league.managers.length > 1 ? `
+          <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderRostersWithOptions(body, this.value, '${escapeAttr(viewMonth)}')">
+            ${league.managers.map(m => `<option value="${escapeAttr(m)}" ${m===viewMgr?'selected':''}>${escapeHtml(m)}</option>`).join('')}
+          </select>
+        ` : ''}
+      </div>
+    </div>
+  `;
+
+  if (!month) {
+    body.innerHTML = html + `<div class="notice info">No roster data for ${escapeHtml(viewMonth)}.</div>`;
+    return;
+  }
+
+  if (roster.length === 0 || roster.every(p => !p.player && !p.irPlayer)) {
+    body.innerHTML = html + `<div class="notice info">Roster is empty — complete the draft to fill it.</div>`;
+    return;
+  }
+
+  // IR explanation banner
+  if (irSlots > 0 && isCurrentMonth && viewMgr === myManager) {
+    html += `
+      <div class="notice info" style="margin-bottom:14px">
+        <strong>🏥 IR slots:</strong> If one of your players is on the MLB Injured List, tap <strong>→ IR</strong> to move them to an IR slot. Their HRs before the injury still count. You can then pick up a replacement from the waiver wire.
+        When they recover, tap <strong>↩ Return</strong> to put them back in your lineup.
+      </div>
+    `;
+  }
+
+  // Roster table
+  html += `<div class="panel" style="margin-bottom:12px"><div class="panel-body" style="padding:0"><table class="data-table">
+    <thead><tr>
+      <th>Player</th>
+      <th>Team</th>
+      <th>Pos</th>
+      <th class="right">HR</th>
+      ${canEdit && (irSlots || waiverType !== 'none') ? '<th style="text-align:center">Manage</th>' : ''}
+    </tr></thead>
+    <tbody>`;
+
+  for (let i = 0; i < roster.length; i++) {
+    const p = roster[i];
+    const hasIR = !!p.irPlayer;
+    const playerDisplay = hasIR ? p.irPlayer : (p.player || '');
+    const healthObj = league.health?.[normNameFE(playerDisplay)];
+    const health = typeof healthObj === 'string' ? healthObj : (healthObj?.status || healthObj?.code || '');
+    const isIL = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
+    const canMoveToIR = canEdit && irSlots > 0 && !hasIR && p.player && isIL && irCount < irSlots;
+    const canReturn = canEdit && hasIR;
+    const canWaiver = canEdit && waiverType !== 'none';
+    const totalSlotHR = (parseInt(p.irHr)||0) + (parseInt(p.hr)||0);
+
+    let actionCell = '';
+    if (hasIR) {
+      actionCell = canReturn
+        ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="returnFromIR('${escapeAttr(viewMgr)}',${i})">↩ Return to lineup</button>`
+        : '';
+    } else if (canMoveToIR) {
+      actionCell = `<button class="btn btn-sm" style="font-size:11px;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" onclick="moveToIR('${escapeAttr(viewMgr)}',${i})">→ IR</button>`;
+    } else if (canWaiver && p.player && !hasIR) {
+      actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:11px" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">⇄ Waiver</button>`;
+    } else if (canWaiver && !p.player && !hasIR) {
+      actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">+ Add player</button>`;
+    }
+
+    html += `<tr style="${hasIR ? 'background:rgba(239,68,68,0.04)' : ''}">
+      <td>
+        <div style="font-weight:600;font-size:13px">${escapeHtml(playerDisplay) || '<span style="color:var(--text-faint)">Empty slot</span>'}
+          ${isIL && !hasIR ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.15);padding:1px 5px;border-radius:3px;margin-left:5px">IL</span>' : ''}
+        </div>
+        ${hasIR ? `
+          <div style="font-size:11px;color:var(--red);margin-top:3px">🏥 On IR — temp slot open</div>
+          ${p.player ? `<div style="font-size:11px;color:var(--text-muted)">Replacement: <strong>${escapeHtml(p.player)}</strong></div>` : `<div style="font-size:11px;color:var(--text-faint)">No replacement yet — use waiver wire</div>`}
+        ` : ''}
+      </td>
+      <td style="font-size:12px">${escapeHtml(hasIR ? p.irTeam : (p.team||''))||'—'}</td>
+      <td style="font-size:12px">${escapeHtml(hasIR ? p.irPosition : (p.position||''))||'—'}</td>
+      <td class="right">
+        ${hasIR
+          ? `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${totalSlotHR}</span>
+             <div style="font-size:9px;color:var(--text-faint)">${p.irHr||0}+${p.hr||0}</div>`
+          : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${parseInt(p.hr)||0}</span>`}
+      </td>
+      ${canEdit && (irSlots || waiverType !== 'none') ? `<td style="text-align:center">${actionCell}</td>` : ''}
+    </tr>`;
+  }
+
+  html += `</tbody></table></div></div>`;
+
+  // Past months summary
+  if (allMonths.length > 1) {
+    html += `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-header">Monthly history — ${escapeHtml(viewMgr)}</div>
         <div class="panel-body" style="padding:0">
           <table class="data-table">
-            <thead><tr>
-              <th>Player</th>
-              <th>Team</th>
-              <th>Pos</th>
-              <th class="right">HR</th>
-              ${irSlots || waiverType !== 'none' ? '<th>Actions</th>' : ''}
-            </tr></thead>
+            <thead><tr><th>Month</th><th class="right">HR</th><th style="text-align:center">Result</th></tr></thead>
             <tbody>
-              ${roster.map((p, i) => {
-                const hasIRPlayer  = !!p.irPlayer;
-                const playerName   = hasIRPlayer ? p.irPlayer : (p.player || '');
-                const healthObj = p.irPlayer
-                  ? (league.health?.[normNameFE(p.irPlayer)])
-                  : (league.health?.[normNameFE(p.player)]);
-                const health = typeof healthObj === 'string'
-                  ? healthObj
-                  : (healthObj?.status || healthObj?.code || '');
-                const isIL = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
-                const canMoveToIR  = canUseIR && !hasIRPlayer && p.player && isIL && irCount < irSlots;
-                const canReturn    = canUseIR && hasIRPlayer;
-
-                let actionCell = '';
-                if (hasIRPlayer) {
-                  // Slot has IR player + temp replacement
-                  actionCell = `
-                    <div style="display:flex;flex-direction:column;gap:3px">
-                      <span style="font-size:9px;background:rgba(239,68,68,0.15);color:var(--red);padding:1px 5px;border-radius:3px;display:inline-block">IR: ${escapeHtml(p.irPlayer)}</span>
-                      ${canReturn ? `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px" onclick="returnFromIR('${escapeAttr(mgr)}',${i})">↩ Return to lineup</button>` : ''}
-                    </div>`;
-                } else if (canMoveToIR) {
-                  actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;color:var(--orange)" onclick="moveToIR('${escapeAttr(mgr)}',${i})">→ IR</button>`;
-                } else if (canWaiver && p.player) {
-                  actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px" onclick="openWaiverClaim('${escapeAttr(mgr)}',${i})">⇄ Waiver</button>`;
-                } else if (!p.player && canWaiver) {
-                  actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;color:var(--green)" onclick="openWaiverClaim('${escapeAttr(mgr)}',${i})">+ Pick up</button>`;
-                }
-
-                const hrDisplay = hasIRPlayer
-                  ? `<span title="IR player HRs: ${p.irHr||0} + Replacement HRs: ${p.hr||0}">${(parseInt(p.irHr)||0)+(parseInt(p.hr)||0)} <span style="font-size:9px;color:var(--text-faint)">(${p.irHr||0}+${p.hr||0})</span></span>`
-                  : (editable
-                      ? `<input class="hr-input" type="number" min="0" value="${parseInt(p.hr)||0}" onchange="editSlot('${escapeAttr(mgr)}',${i},'hr',this.value)">`
-                      : `<strong>${parseInt(p.hr)||0}</strong>`);
-
-                return `<tr style="${hasIRPlayer ? 'background:rgba(239,68,68,0.04)' : ''}">
+              ${allMonths.map(m => {
+                const mRoster = league.months[m]?.rosters?.[viewMgr] || [];
+                const mHR = mRoster.reduce((s,p) => s + (parseInt(p.irHr)||0) + (parseInt(p.hr)||0), 0);
+                const isActive = m === currentMonth;
+                return `<tr style="${isActive ? 'background:rgba(240,199,94,0.05)' : ''}">
                   <td>
-                    ${editable
-                      ? `<input class="slot-input" value="${escapeAttr(p.player||'')}" placeholder="Player name" onchange="editSlot('${escapeAttr(mgr)}',${i},'player',this.value)">`
-                      : `<span style="font-weight:600">${escapeHtml(p.player||'—')}</span>`}
-                    ${hasIRPlayer ? `<div style="font-size:10px;color:var(--red);margin-top:2px">🏥 IR slot — temp fill</div>` : ''}
-                    ${!hasIRPlayer && isIL ? `<span style="font-size:10px;color:var(--red);margin-left:4px">🏥 IL</span>` : ''}
+                    <button class="btn btn-sm btn-ghost" style="font-size:12px" onclick="renderRostersWithOptions(document.getElementById('tab-body'), '${escapeAttr(viewMgr)}', '${escapeAttr(m)}')">${escapeHtml(m)}${isActive?' <span style="font-size:9px;color:var(--accent)">(current)</span>':''}</button>
                   </td>
-                  <td>
-                    ${editable
-                      ? `<input class="slot-input" value="${escapeAttr(p.team||'')}" placeholder="Team" onchange="editSlot('${escapeAttr(mgr)}',${i},'team',this.value)">`
-                      : `<span>${escapeHtml(p.team||'—')}</span>`}
-                  </td>
-                  <td>
-                    ${editable
-                      ? `<select class="slot-input" onchange="editSlot('${escapeAttr(mgr)}',${i},'position',this.value)">
-                           <option value="">—</option>
-                           ${(league.positions||[]).map(pos=>`<option value="${escapeAttr(pos)}" ${p.position===pos?'selected':''}>${escapeHtml(pos)}</option>`).join('')}
-                         </select>`
-                      : `<span>${escapeHtml(p.position||'—')}</span>`}
-                  </td>
-                  <td class="right">${hrDisplay}</td>
-                  ${irSlots || waiverType !== 'none' ? `<td>${actionCell}</td>` : ''}
+                  <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700">${mHR}</td>
+                  <td style="text-align:center;font-size:11px;color:var(--text-muted)">${isActive ? '—' : '✓ Final'}</td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -2432,8 +2481,19 @@ function renderRostersEdit(body) {
       </div>
     `;
   }
+
   body.innerHTML = html;
+  body._viewMgr = viewMgr;
+  body._viewMonth = viewMonth;
 }
+
+function renderRostersWithOptions(body, mgr, month) {
+  body._viewMgr = mgr;
+  body._viewMonth = month;
+  renderRostersEdit(body);
+}
+
+
 
 // Simple client-side normName for health lookups
 function normNameFE(s) {
