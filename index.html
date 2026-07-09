@@ -1313,18 +1313,6 @@ async function _fetchAndRenderLeague() {
   } catch {}
 }
 
-async function _fetchAndRenderLeague() {
-  if (!CURRENT_LEAGUE) return;
-  try {
-    const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), { headers: authHeaders(), cache: 'no-store' });
-    const res = await r.json();
-    if (!res.ok) return;
-    CURRENT_LEAGUE = res;
-    if (CURRENT_LEAGUE.league.lastSync) setSyncUI('live', 'Synced', { serverTs: CURRENT_LEAGUE.league.lastSync });
-    renderLeagueShell();
-  } catch {}
-}
-
 // Save which <details> elements are open by their summary text (used as a key),
 // re-apply after any DOM rebuild so user-opened sections stay open.
 function saveDetailsState() {
@@ -1345,6 +1333,9 @@ function restoreDetailsState(state) {
 }
 
 function renderLeagueShell() {
+  // Save <details> open/closed state before wiping the DOM so sections
+  // like "How this league works" don't collapse on every background poll.
+  const detailsState = saveDetailsState();
   const { league, myManager, isCommish, isPending } = CURRENT_LEAGUE;
   const v = document.getElementById('view');
   const tabs = [
@@ -1391,6 +1382,8 @@ function renderLeagueShell() {
     </div>
   `;
   renderActiveTab();
+  // Restore <details> open/closed state after the DOM has been rebuilt
+  requestAnimationFrame(() => restoreDetailsState(detailsState));
 }
 
 function renderOnboardingChecklist() {
@@ -1780,10 +1773,10 @@ function renderLeagueRulesCard(league, isCommish) {
       : `you can have <strong>up to 2 players at the same position</strong>`;
 
   const teamRuleText = teamRule === 'all-unique'
-    ? `each MLB team can only be represented <strong>once across the entire league</strong> — if someone picks a Yankee, no other manager can pick any Yankee`
+    ? `Each MLB team can only be represented <strong>once across the entire league</strong> — if someone picks a Yankee, no other manager can pick any Yankee`
     : teamRule === 'unrestricted'
       ? `<strong>no restrictions</strong> on MLB team — multiple managers can pick players from the same team`
-      : `each manager can have <strong>one player per MLB team</strong>`;
+      : `Each manager can have <strong>one player per MLB team</strong>`;
 
   const cadenceText = cadence === 'monthly'
     ? 're-draft at the start of each month'
