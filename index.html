@@ -2419,16 +2419,16 @@ function renderRostersEdit(body) {
 
     let actionCell = '';
     if (hasIR) {
-      actionCell = canReturn
-        ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="returnFromIR('${escapeAttr(viewMgr)}',${i})">↩ Return to lineup</button>`
-        : '';
+      // IR slot: ↩ return button + pick up button on the open slot
+      actionCell = `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
+        ${canReturn ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="returnFromIR('${escapeAttr(viewMgr)}',${i})">↩ Return to lineup</button>` : ''}
+        ${!p.player && canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--accent)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">+ Pick up replacement</button>` : ''}
+      </div>`;
     } else if (canMoveToIR) {
+      // IL player — IR button only, no waiver
       actionCell = `<button class="btn btn-sm" style="font-size:11px;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" onclick="moveToIR('${escapeAttr(viewMgr)}',${i})">→ IR</button>`;
-    } else if (canWaiver && p.player && !hasIR) {
-      actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:11px" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">⇄ Waiver</button>`;
-    } else if (canWaiver && !p.player && !hasIR) {
-      actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">+ Add player</button>`;
     }
+    // Healthy players get no action buttons — waiver is a standalone section below
 
     html += `<tr style="${hasIR ? 'background:rgba(239,68,68,0.04)' : ''}">
       <td>
@@ -2437,7 +2437,7 @@ function renderRostersEdit(body) {
         </div>
         ${hasIR ? `
           <div style="font-size:11px;color:var(--red);margin-top:3px">🏥 On IR — temp slot open</div>
-          ${p.player ? `<div style="font-size:11px;color:var(--text-muted)">Replacement: <strong>${escapeHtml(p.player)}</strong></div>` : `<div style="font-size:11px;color:var(--text-faint)">No replacement yet — use waiver wire</div>`}
+          ${p.player ? `<div style="font-size:11px;color:var(--text-muted)">Replacement: <strong>${escapeHtml(p.player)}</strong></div>` : `<div style="font-size:11px;color:var(--accent)">← Tap "+ Pick up replacement" to fill this slot</div>`}
         ` : ''}
       </td>
       <td style="font-size:12px">${escapeHtml(hasIR ? p.irTeam : (p.team||''))||'—'}</td>
@@ -2473,6 +2473,37 @@ function renderRostersEdit(body) {
   }
 
   html += `</tbody></table></div></div>`;
+
+  // ── WAIVER WIRE SECTION ──
+  // Standalone section below the roster — drop a player, pick up a free agent.
+  // Separate from IR. Only shows when waiver wire is enabled in settings.
+  if (canEdit && waiverType !== 'none' && isCurrentMonth) {
+    html += `
+      <div class="panel" style="margin-top:14px">
+        <div class="panel-header">🔄 Waiver wire</div>
+        <div class="panel-body">
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+            Drop one of your players and pick up a free agent from the undrafted pool.
+            ${waiverType === 'waiver-order' ? 'Claims are processed in waiver order (worst record picks first).' : 'Claims are first-come first-served.'}
+          </p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            ${roster.map((p, i) => !p.irPlayer && p.player ? `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(0,0,0,0.2);border-radius:6px;border:1px solid var(--panel-border)">
+                <div>
+                  <span style="font-weight:600;font-size:13px">${escapeHtml(p.player)}</span>
+                  <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${escapeHtml(p.team)} · ${escapeHtml(p.position)} · ${p.hr} HR</span>
+                </div>
+                <button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--orange)"
+                  onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">
+                  Drop &amp; replace →
+                </button>
+              </div>
+            ` : '').join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   // Past months summary
   if (allMonths.length > 1) {
@@ -2924,7 +2955,10 @@ function renderQueuePanel() {
             <button class="btn btn-sm btn-ghost" style="padding:1px 5px;font-size:10px;line-height:1.2" onclick="moveQueueItem('${escapeAttr(leagueId)}',${i},1)" ${i===_draftQueue.length-1?'disabled':''}>↓</button>
           </div>
           ${i===0 && isMyTurn
-            ? `<button class="btn btn-sm btn-primary" style="font-size:11px;padding:4px 8px;flex-shrink:0" onclick="draftFromQueue('${escapeAttr(leagueId)}')">Draft!</button>`
+            ? `<div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0">
+                 <button class="btn btn-sm btn-primary" style="font-size:11px;padding:4px 8px" onclick="draftFromQueue('${escapeAttr(leagueId)}')">Draft!</button>
+                 <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:10px;color:var(--text-faint)" onclick="removeFromQueue('${escapeAttr(leagueId)}','${escapeAttr(p.name)}')">✕ Remove</button>
+               </div>`
             : `<button class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:11px;color:var(--text-faint)" onclick="removeFromQueue('${escapeAttr(leagueId)}','${escapeAttr(p.name)}')">✕</button>`
           }
         </div>
