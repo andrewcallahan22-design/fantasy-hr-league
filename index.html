@@ -1984,7 +1984,9 @@ function renderScoreboard(body) {
                 <th>Player</th>
                 <th style="font-size:10px;padding:9px 4px">Pos</th>
                 <th style="font-size:10px;padding:9px 4px">Team</th>
-                <th class="right" style="font-size:10px;padding:9px 4px;white-space:nowrap">+3d</th>
+                <th class="right" style="font-size:10px;padding:9px 4px;white-space:nowrap">
+                  <span title="Home runs hit by this player in the last 3 days — a quick read on who's been hot recently" style="cursor:help;border-bottom:1px dashed rgba(255,255,255,0.3)">+3d ⓘ</span>
+                </th>
                 <th class="right" style="font-size:10px;padding:9px 6px">HR</th>
               </tr>
             </thead>
@@ -2411,6 +2413,122 @@ let _draft = null;
 let _draftFilter = { pos: 'ALL', team: 'ALL', health: 'ALL', search: '' };
 let _draftSort = 'hr'; // 'hr' | 'prevHR' | 'name'
 let _draftRosterMgr = null;
+
+// ── DRAFT QUEUE ──
+// Per-league queue stored in localStorage — personal to each manager's device.
+// Auto-purges drafted players on every render.
+let _draftQueue = [];
+
+function loadDraftQueue(leagueId) {
+  try {
+    const raw = localStorage.getItem(`draftQueue:${leagueId}`);
+    _draftQueue = raw ? JSON.parse(raw) : [];
+  } catch { _draftQueue = []; }
+}
+
+function saveDraftQueue(leagueId) {
+  try {
+    localStorage.setItem(`draftQueue:${leagueId}`, JSON.stringify(_draftQueue));
+  } catch {}
+}
+
+function addToQueue(leagueId, idx) {
+  const player = window._draftFilteredPool?.[idx];
+  if (!player) return;
+  if (_draftQueue.some(p => normName(p.name) === normName(player.name))) {
+    removeFromQueue(leagueId, player.name);
+    return; // toggle off if already in queue
+  }
+  _draftQueue.push({ name: player.name, team: player.team, pos: player.pos, hr: player.hr, id: player.id });
+  saveDraftQueue(leagueId);
+  // Update just the queue panel without re-rendering the whole draft board
+  renderQueuePanel();
+  // Flash the row to confirm
+  const btn = document.querySelector(`[data-queue-idx="${idx}"]`);
+  if (btn) { btn.textContent = '✓Q'; btn.style.color = 'var(--green)'; }
+}
+
+function removeFromQueue(leagueId, playerName) {
+  _draftQueue = _draftQueue.filter(p => normName(p.name) !== normName(playerName));
+  saveDraftQueue(leagueId);
+  renderQueuePanel();
+}
+
+function moveQueueItem(leagueId, idx, dir) {
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= _draftQueue.length) return;
+  const item = _draftQueue.splice(idx, 1)[0];
+  _draftQueue.splice(newIdx, 0, item);
+  saveDraftQueue(leagueId);
+  renderQueuePanel();
+}
+
+function purgeQueueOfDraftedPlayers() {
+  const pool = _draft?.pool || [];
+  const draftedNames = new Set(pool.filter(p => p.drafted).map(p => normName(p.name)));
+  _draftQueue = _draftQueue.filter(p => !draftedNames.has(normName(p.name)));
+}
+
+function renderQueuePanel() {
+  const el = document.getElementById('draft-queue-panel');
+  if (!el) return;
+  const leagueId = CURRENT_LEAGUE?.league?.id;
+  const isMyTurn = _draft?.onClock === _draft?.me;
+  purgeQueueOfDraftedPlayers();
+
+  if (!_draftQueue.length) {
+    el.innerHTML = `
+      <div class="panel-header">My Queue</div>
+      <div class="panel-body" style="padding:14px 12px;color:var(--text-faint);font-size:12px;text-align:center;line-height:1.6">
+        Tap <strong style="color:var(--text)">+Q</strong> next to any player to add them.<br>
+        When it's your turn, draft straight from here.
+      </div>
+    `;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="panel-header" style="justify-content:space-between">
+      <span>My Queue <span style="color:var(--accent);font-weight:700;margin-left:4px">${_draftQueue.length}</span></span>
+      <button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px" onclick="clearDraftQueue('${escapeAttr(leagueId)}')">Clear all</button>
+    </div>
+    <div class="panel-body" style="padding:0">
+      ${isMyTurn ? `<div style="padding:8px 12px;background:rgba(240,199,94,0.1);border-bottom:1px solid rgba(240,199,94,0.2);font-size:11px;font-weight:600;color:var(--accent);text-align:center">⭐ It's your turn! Draft from your queue below.</div>` : ''}
+      ${_draftQueue.map((p, i) => `
+        <div style="padding:8px 10px;border-bottom:1px dashed var(--panel-border);display:flex;align-items:center;gap:6px;${i===0&&isMyTurn?'background:rgba(240,199,94,0.06)':''}">
+          <span style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:14px;flex-shrink:0">${i+1}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</div>
+            <div style="display:flex;gap:3px;margin-top:2px">
+              <span class="team-chip" style="font-size:9px">${escapeHtml(p.team)}</span>
+              <span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos)}</span>
+              <span style="font-size:9px;color:var(--text-faint)">${p.hr} HR</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:1px">
+            <button class="btn btn-sm btn-ghost" style="padding:1px 5px;font-size:10px;line-height:1.2" onclick="moveQueueItem('${escapeAttr(leagueId)}',${i},-1)" ${i===0?'disabled':''}>↑</button>
+            <button class="btn btn-sm btn-ghost" style="padding:1px 5px;font-size:10px;line-height:1.2" onclick="moveQueueItem('${escapeAttr(leagueId)}',${i},1)" ${i===_draftQueue.length-1?'disabled':''}>↓</button>
+          </div>
+          ${i===0 && isMyTurn
+            ? `<button class="btn btn-sm btn-primary" style="font-size:11px;padding:4px 8px;flex-shrink:0" onclick="draftFromQueue('${escapeAttr(leagueId)}')">Draft!</button>`
+            : `<button class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:11px;color:var(--text-faint)" onclick="removeFromQueue('${escapeAttr(leagueId)}','${escapeAttr(p.name)}')">✕</button>`
+          }
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function draftFromQueue(leagueId) {
+  if (!_draftQueue.length) return;
+  await makeDraftPick(leagueId, _draftQueue[0]);
+}
+
+function clearDraftQueue(leagueId) {
+  _draftQueue = [];
+  saveDraftQueue(leagueId);
+  renderQueuePanel();
+}
 let _draftPollTimer = null;
 
 // Looks up who drafted a given player name from the draft's picks array.
@@ -2430,6 +2548,8 @@ async function renderDraft(body) {
   body.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-muted)">Loading draft room…</div>`;
   // Reset cached pool when entering the draft tab fresh
   window._draftFullPool = null;
+  // Load this manager's personal queue from localStorage
+  loadDraftQueue(CURRENT_LEAGUE.league.id);
   await loadDraftState(body, { fullPool: true });
 }
 
@@ -2644,8 +2764,11 @@ function renderDraftRoom(body) {
   body.innerHTML = `
     <div style="display:grid;grid-template-columns:240px 1fr 280px;gap:14px;align-items:start" id="draft-grid">
 
-      <!-- LEFT: Recent picks (sticky, always visible, no scrolling needed) -->
-      <div style="position:sticky;top:80px">
+      <!-- LEFT: Recent picks + Queue -->
+      <div style="position:sticky;top:80px;display:flex;flex-direction:column;gap:12px">
+        <!-- Queue panel -->
+        <div class="panel" id="draft-queue-panel" style="margin:0"></div>
+
         <div class="panel" style="margin:0">
           <div class="panel-header">Recent Picks</div>
           <div class="panel-body" style="padding:0;max-height:calc(100vh - 160px);overflow-y:auto">
@@ -2776,6 +2899,8 @@ function renderDraftRoom(body) {
       }
     </style>
   `;
+  // Populate the queue panel after the DOM is set
+  requestAnimationFrame(() => renderQueuePanel());
 }
 
 function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
@@ -2857,6 +2982,12 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
       actionCell = `<button class="btn btn-sm btn-ghost" style="padding:3px 10px;font-size:11px" disabled>Draft</button>`;
     }
 
+    const leagueId = CURRENT_LEAGUE?.league?.id || '';
+    const inQueue = !isDrafted && _draftQueue.some(q => normName(q.name) === normName(p.name));
+    const queueBtn = !isDrafted
+      ? `<button data-queue-idx="${i}" class="btn btn-sm ${inQueue ? 'btn-primary' : 'btn-ghost'}" style="padding:3px 6px;font-size:10px" onclick="addToQueue('${escapeAttr(leagueId)}',${i})" title="${inQueue ? 'Remove from queue' : 'Add to queue'}">${inQueue ? '✓Q' : '+Q'}</button>`
+      : '';
+
     return `<tr style="${rowStyle}">
       <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${p.rank || i + 1}</td>
       <td style="font-weight:600;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
@@ -2867,7 +2998,7 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
       <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600">${p.hr}</td>
       <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-muted)">${p.prevHR || '—'}</td>
       <td style="font-size:10px;color:${healthColor}">${escapeHtml(p.health)}</td>
-      <td style="text-align:center">${actionCell}</td>
+      <td style="text-align:center;white-space:nowrap">${queueBtn} ${actionCell}</td>
     </tr>`;
   }).join('');
 }
