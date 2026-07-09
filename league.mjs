@@ -97,7 +97,7 @@ export default async (req) => {
     for (const entry of index) {
       const lg = await loadLeague(entry.id);
       if (!lg) continue;
-      const member = (lg.members || []).find(m => m.email?.toLowerCase() === session.email);
+      const member = (lg.members || []).find(m => m.email?.toLowerCase() === session.email?.toLowerCase());
       if (!member) continue;
       mine.push({
         id: lg.id, name: lg.name, createdAt: lg.createdAt,

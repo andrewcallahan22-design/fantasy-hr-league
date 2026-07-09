@@ -51,6 +51,7 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+body { padding-bottom: env(safe-area-inset-bottom, 0px); }
 button { font-family: inherit; cursor: pointer; }
 input, select { font-family: inherit; }
 a { color: var(--blue); text-decoration: none; }
@@ -74,9 +75,12 @@ body::before {
   background: rgba(5,8,16,0.85);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--panel-border);
-  padding: 12px 24px;
+  /* Safe area inset pushes content below iPhone status bar (time/battery).
+     env(safe-area-inset-top) is 0 on non-notch devices and ~44-59px on
+     Face ID iPhones and Dynamic Island models. Falls back to 0 on desktop. */
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 24px 12px 24px;
   display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; min-height: 60px;
+  gap: 16px; min-height: calc(60px + env(safe-area-inset-top, 0px));
   flex-wrap: wrap;
 }
 .brand { display: flex; align-items: center; gap: 12px; cursor: pointer; }
@@ -116,7 +120,7 @@ body::before {
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 @media (max-width: 720px) {
-  .site-header { padding: 10px 14px; gap: 8px; }
+  .site-header { padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px 14px; gap: 8px; }
   .brand-title { font-size: 13px; }
   .sync-status { font-size: 10px; max-width: 130px; }
 }
@@ -961,6 +965,14 @@ async function renderMyLeagues() {
   try {
     const r = await fetch(API_LEAGUE, { headers: authHeaders(), cache: 'no-store' });
     const data = await r.json();
+
+    // If server says we're not authenticated, clear stale session and show sign-in
+    if (r.status === 401 || data.error === 'Not signed in' || data.error === 'Invalid token') {
+      setSession(null);
+      navigate('/');
+      return;
+    }
+
     const list = document.getElementById('my-leagues-list');
     if (!data.leagues || !data.leagues.length) {
       const helperForAdmin = SESSION.isAdmin
@@ -972,6 +984,7 @@ async function renderMyLeagues() {
         <div class="empty-state">
           <div class="empty-state-title">You're not in any leagues yet</div>
           <div class="empty-state-body">Start your own with the button below, or use an invite link from a friend.</div>
+          <button class="btn btn-sm btn-ghost" style="margin-top:12px" onclick="renderMyLeagues()">↺ Refresh</button>
         </div>
         ${helperForAdmin}
       `;
