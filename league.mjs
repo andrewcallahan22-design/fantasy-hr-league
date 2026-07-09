@@ -552,17 +552,16 @@ export default async (req) => {
       return Response.json({ ok: false, error: `You've used all ${irSlots} IR slot(s)` }, { status: 400 });
     }
 
-    // Move player to IR — mark original slot as IR, preserve HRs
-    slot.irPlayer = slot.player;
-    slot.irTeam = slot.team;
+    // Move player to IR — preserve their HR count, open slot for replacement
+    slot.irPlayer   = slot.player;
+    slot.irTeam     = slot.team;
     slot.irPosition = slot.position;
-    slot.irHr = slot.hr; // HRs they earned before going to IR
-    slot.irMovedAt = Date.now();
-    slot.player = ''; // Open for replacement
-    slot.team = '';
-    slot.position = '';
-    // Keep slot.hr — this will accumulate replacement player HRs
-    // irHr is what counts from the original player
+    slot.irHr       = parseInt(slot.hr) || 0; // save pre-injury HRs
+    slot.irMovedAt  = Date.now();
+    slot.player     = '';  // open for replacement pickup
+    slot.team       = '';
+    slot.position   = '';
+    slot.hr         = 0;   // replacement player starts fresh at 0
 
     await saveLeague(league);
     return Response.json({ ok: true }, { headers: NO_CACHE });

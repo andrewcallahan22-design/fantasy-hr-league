@@ -2412,7 +2412,7 @@ function renderRostersEdit(body) {
     const healthObj = league.health?.[normNameFE(playerDisplay)];
     const health = typeof healthObj === 'string' ? healthObj : (healthObj?.status || healthObj?.code || '');
     const isIL = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
-    const canMoveToIR = canEdit && irSlots > 0 && !hasIR && p.player && isIL && irCount < irSlots;
+    const canMoveToIR = canEdit && irSlots > 0 && !hasIR && p.player && (isIL || isCommish || isAdmin) && irCount < irSlots;
     const canReturn = canEdit && hasIR;
     const canWaiver = canEdit && waiverType !== 'none';
     const totalSlotHR = (parseInt(p.irHr)||0) + (parseInt(p.hr)||0);
@@ -2501,11 +2501,18 @@ function normNameFE(s) {
 }
 
 async function moveToIR(mgr, slotIndex) {
-  if (!confirm(`Move this player to the IR slot? They'll be held while you add a temporary replacement.`)) return;
+  if (!confirm(`Move this player to the IR slot? Their current HRs will be preserved. You can then pick up a replacement using the waiver wire.`)) return;
+  const { isCommish } = CURRENT_LEAGUE;
   const r = await fetch(API_LEAGUE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ action: 'move-to-ir', leagueId: CURRENT_LEAGUE.league.id, manager: mgr, slotIndex }),
+    body: JSON.stringify({
+      action: 'move-to-ir',
+      leagueId: CURRENT_LEAGUE.league.id,
+      manager: mgr,
+      slotIndex,
+      forceCommish: isCommish || SESSION?.isAdmin,
+    }),
   });
   const res = await r.json();
   if (!res.ok) { alert(res.error); return; }
@@ -2530,57 +2537,125 @@ function openWaiverClaim(mgr, slotIndex) {
   const { league } = CURRENT_LEAGUE;
   const month = league.months?.[league.currentMonth];
   const slot = month?.rosters?.[mgr]?.[slotIndex];
-  const irRule = league.settings?.irReplacementRule || 'any-available';
+  const irRule   = league.settings?.irReplacementRule || 'any-available';
   const sameTeam = slot?.irPlayer && irRule === 'same-team';
 
-  // Build modal
+  // Build list of all players currently on any roster (to exclude from search)
+  const takenNames = new Set();
+  const takenTeams = new Set();
+  for (const [, r] of Object.entries(month?.rosters || {})) {
+    for (const p of r) {
+      if (p.player)   takenNames.add(normNameFE(p.player));
+      if (p.irPlayer) takenNames.add(normNameFE(p.irPlayer));
+      if (p.team)     takenTeams.add(p.team.toUpperCase());
+    }
+  }
+
+  _waiverSelected = null; // always reset when opening a new claim
   const wrap = document.createElement('div');
   wrap.className = 'modal-overlay open';
+  wrap.id = 'waiver-modal';
   wrap.innerHTML = `
-    <div class="modal" style="max-width:440px">
+    <div class="modal" style="max-width:480px">
       <div class="modal-head">
-        <div class="modal-title">⇄ Waiver Claim</div>
+        <div class="modal-title">
+          ${slot?.irPlayer ? `⇄ Pick up IR replacement` : `⇄ Waiver claim`}
+        </div>
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
       </div>
       <div class="modal-body">
-        ${slot?.player ? `<p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Dropping: <strong style="color:var(--text)">${escapeHtml(slot.irPlayer || slot.player)}</strong></p>` : ''}
-        ${sameTeam ? `<div class="notice warn" style="margin-bottom:12px">Same-team IR rule: replacement must be from <strong>${escapeHtml(slot.irTeam)}</strong></div>` : ''}
+        ${slot?.player ? `<div class="notice info" style="margin-bottom:12px;margin-top:0">Dropping: <strong>${escapeHtml(slot.player)}</strong> (${escapeHtml(slot.team)})</div>` : ''}
+        ${slot?.irPlayer ? `<div class="notice warn" style="margin-bottom:12px;margin-top:0">IR slot: <strong>${escapeHtml(slot.irPlayer)}</strong> is on the IL. Pick up a replacement${sameTeam ? ` from <strong>${escapeHtml(slot.irTeam)}</strong> (same-team rule)` : ''}.</div>` : ''}
         <div class="field">
-          <label>Player to pick up</label>
-          <input class="input" id="waiver-player-name" placeholder="Type player name…" autocomplete="off">
+          <label>Search for a player to pick up</label>
+          <input class="input" id="waiver-search" placeholder="Type player name…" autocomplete="off"
+            oninput="waiverSearch(this.value, ${JSON.stringify(Array.from(takenNames))}, ${JSON.stringify(Array.from(takenTeams))}, '${sameTeam ? escapeAttr(slot.irTeam) : ''}')">
         </div>
-        <div class="field">
-          <label>Their MLB team</label>
-          <input class="input" id="waiver-player-team" placeholder="e.g. LAD" maxlength="10" style="max-width:100px"
-            ${sameTeam ? `value="${escapeAttr(slot.irTeam)}" readonly` : ''}>
-        </div>
-        <div class="field">
-          <label>Position</label>
-          <select class="select" id="waiver-player-pos">
-            <option value="">—</option>
-            ${(league.positions||[]).map(p=>`<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`).join('')}
-          </select>
+        <div id="waiver-results" style="max-height:240px;overflow-y:auto;border:1px solid var(--panel-border);border-radius:6px;margin-bottom:12px;display:none"></div>
+        <div id="waiver-selected" style="display:none;padding:10px 12px;background:rgba(58,160,92,0.1);border:1px solid rgba(58,160,92,0.3);border-radius:6px;margin-bottom:12px">
+          <div style="font-size:11px;color:var(--green);font-weight:600;margin-bottom:4px">✓ Selected</div>
+          <div id="waiver-selected-name" style="font-weight:700"></div>
+          <div id="waiver-selected-detail" style="font-size:11px;color:var(--text-muted)"></div>
         </div>
         <div class="error" id="waiver-err" style="margin-bottom:8px"></div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-primary" onclick="submitWaiverClaim('${escapeAttr(mgr)}',${slotIndex})">Confirm claim</button>
+          <button class="btn btn-primary" id="waiver-confirm-btn" disabled onclick="submitWaiverClaim('${escapeAttr(mgr)}',${slotIndex})">Confirm claim</button>
           <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
         </div>
       </div>
     </div>
   `;
   document.body.appendChild(wrap);
-  setTimeout(() => document.getElementById('waiver-player-name')?.focus(), 100);
+  setTimeout(() => document.getElementById('waiver-search')?.focus(), 100);
+}
+
+let _waiverSelected = null;
+
+async function waiverSearch(query, takenNames, takenTeams, requiredTeam) {
+  const resultsEl = document.getElementById('waiver-results');
+  const selectedEl = document.getElementById('waiver-selected');
+  if (!query || query.length < 2) { resultsEl.style.display = 'none'; return; }
+
+  resultsEl.style.display = 'block';
+  resultsEl.innerHTML = '<div style="padding:10px;color:var(--text-muted);font-size:12px">Searching…</div>';
+
+  try {
+    // Search MLB Stats API for the player
+    const r = await fetch(`https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(query)}&sportIds=1&active=true`);
+    const data = await r.json();
+    const people = (data.people || []).slice(0, 10);
+
+    if (!people.length) {
+      resultsEl.innerHTML = '<div style="padding:10px;color:var(--text-muted);font-size:12px">No players found. Try a different spelling.</div>';
+      return;
+    }
+
+    resultsEl.innerHTML = people.map(p => {
+      const norm = normNameFE(p.fullName);
+      const team = p.currentTeam?.abbreviation || '?';
+      const isTaken = takenNames.includes(norm);
+      const teamTaken = takenTeams.includes(team.toUpperCase()) && !isTaken;
+      const wrongTeam = requiredTeam && team.toUpperCase() !== requiredTeam.toUpperCase();
+      const disabled = isTaken || teamTaken || wrongTeam;
+      const reason = isTaken ? 'Already on a roster'
+        : teamTaken ? `${team} already in league`
+        : wrongTeam ? `Must be from ${requiredTeam}`
+        : '';
+
+      return `<div style="padding:9px 12px;border-bottom:1px dashed var(--panel-border);display:flex;align-items:center;justify-content:space-between;${disabled ? 'opacity:0.4' : 'cursor:pointer'}"
+        ${disabled ? '' : `onclick="selectWaiverPlayer(${JSON.stringify({name:p.fullName, team, pos:p.primaryPosition?.abbreviation||'?', id:p.id})})" `}>
+        <div>
+          <div style="font-weight:600;font-size:13px">${escapeHtml(p.fullName)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">${escapeHtml(team)} · ${escapeHtml(p.primaryPosition?.abbreviation||'?')}</div>
+        </div>
+        <div style="font-size:10px;color:${disabled ? 'var(--red)' : 'var(--text-faint)'}">
+          ${disabled ? escapeHtml(reason) : 'Select →'}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    resultsEl.innerHTML = '<div style="padding:10px;color:var(--red);font-size:12px">Search failed — check your connection</div>';
+  }
+}
+
+function selectWaiverPlayer(player) {
+  _waiverSelected = player;
+  document.getElementById('waiver-results').style.display = 'none';
+  document.getElementById('waiver-search').value = player.name;
+  const sel = document.getElementById('waiver-selected');
+  sel.style.display = 'block';
+  document.getElementById('waiver-selected-name').textContent = player.name;
+  document.getElementById('waiver-selected-detail').textContent = `${player.team} · ${player.pos}`;
+  document.getElementById('waiver-confirm-btn').disabled = false;
 }
 
 async function submitWaiverClaim(mgr, slotIndex) {
-  const pickupPlayer = document.getElementById('waiver-player-name')?.value.trim();
-  const pickupTeam   = document.getElementById('waiver-player-team')?.value.trim().toUpperCase();
-  const pickupPos    = document.getElementById('waiver-player-pos')?.value;
-  const err          = document.getElementById('waiver-err');
+  const err = document.getElementById('waiver-err');
+  if (!_waiverSelected) { if (err) err.textContent = 'Search for and select a player first'; return; }
 
-  if (!pickupPlayer) { err.textContent = 'Enter a player name'; return; }
-  if (!pickupTeam)   { err.textContent = 'Enter their MLB team abbreviation'; return; }
+  const { name: pickupPlayer, team: pickupTeam, pos: pickupPos } = _waiverSelected;
+  const btn = document.getElementById('waiver-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Claiming…'; }
 
   const r = await fetch(API_LEAGUE, {
     method: 'POST',
@@ -2596,8 +2671,13 @@ async function submitWaiverClaim(mgr, slotIndex) {
     }),
   });
   const res = await r.json();
-  if (!res.ok) { err.textContent = res.error || 'Failed'; return; }
-  document.querySelector('.modal-overlay')?.remove();
+  if (!res.ok) {
+    if (err) err.textContent = res.error || 'Failed';
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm claim'; }
+    return;
+  }
+  _waiverSelected = null;
+  document.getElementById('waiver-modal')?.remove();
   await refreshLeague();
   renderActiveTab();
 }
