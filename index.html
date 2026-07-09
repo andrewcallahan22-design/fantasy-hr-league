@@ -1313,6 +1313,37 @@ async function _fetchAndRenderLeague() {
   } catch {}
 }
 
+async function _fetchAndRenderLeague() {
+  if (!CURRENT_LEAGUE) return;
+  try {
+    const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), { headers: authHeaders(), cache: 'no-store' });
+    const res = await r.json();
+    if (!res.ok) return;
+    CURRENT_LEAGUE = res;
+    if (CURRENT_LEAGUE.league.lastSync) setSyncUI('live', 'Synced', { serverTs: CURRENT_LEAGUE.league.lastSync });
+    renderLeagueShell();
+  } catch {}
+}
+
+// Save which <details> elements are open by their summary text (used as a key),
+// re-apply after any DOM rebuild so user-opened sections stay open.
+function saveDetailsState() {
+  const state = {};
+  document.querySelectorAll('details').forEach(d => {
+    const key = d.querySelector('summary')?.textContent?.trim().slice(0, 60);
+    if (key) state[key] = d.open;
+  });
+  return state;
+}
+
+function restoreDetailsState(state) {
+  if (!state) return;
+  document.querySelectorAll('details').forEach(d => {
+    const key = d.querySelector('summary')?.textContent?.trim().slice(0, 60);
+    if (key && state[key] !== undefined) d.open = state[key];
+  });
+}
+
 function renderLeagueShell() {
   const { league, myManager, isCommish, isPending } = CURRENT_LEAGUE;
   const v = document.getElementById('view');
@@ -1472,6 +1503,16 @@ async function copyInvite(url) {
 function renderActiveTab() {
   const body = document.getElementById('tab-body');
   if (!body) return;
+  // Save which <details> sections are open before any re-render,
+  // restore after — prevents "How this league works" and other
+  // expandable sections from collapsing when the poll fires.
+  const detailsState = saveDetailsState();
+  const result = _renderActiveTabInner(body);
+  requestAnimationFrame(() => restoreDetailsState(detailsState));
+  return result;
+}
+
+function _renderActiveTabInner(body) {
   if (CURRENT_TAB === 'scoreboard')  return renderScoreboard(body);
   if (CURRENT_TAB === 'standings')   return renderStandings(body);
   if (CURRENT_TAB === 'edit')        return renderRostersEdit(body);
