@@ -926,6 +926,34 @@ async function renderRoute() {
 // ── ADMIN DASHBOARD ──
 // Only accessible when SESSION.isAdmin. Shows all leagues across the platform.
 // ── ADMIN ACTIONS ──
+async function adminCheckPush(leagueId, leagueName) {
+  try {
+    const r = await fetch(`/.netlify/functions/diag?leagueId=${encodeURIComponent(leagueId)}&push=1`, {
+      headers: authHeaders(), cache: 'no-store'
+    });
+    const res = await r.json();
+    if (!res.ok) { alert(res.error || 'Failed'); return; }
+
+    const lines = [
+      `Push diagnostics for "${leagueName}"`,
+      `VAPID keys configured: ${res.vapidConfigured ? '✅ Yes' : '❌ NO — notifications will not work!'}`,
+      '',
+      `${res.summary.subscribed}/${res.summary.totalActive} managers subscribed`,
+      `${res.summary.notifyAllEnabled} have "notify all" enabled`,
+      res.summary.notLinked > 0 ? `⚠ ${res.summary.notLinked} member(s) have no email linked` : '',
+      '',
+      '--- Per manager ---',
+      ...res.memberStatus.map(m =>
+        `${m.manager} (${m.email})\n  Subscribed: ${m.subscribed ? `✅ ${m.deviceCount} device(s)` : '❌ No'} | Notify rivals: ${m.notifyAll ? '✅' : '❌'}`
+      ),
+    ].filter(l => l !== '');
+
+    alert(lines.join('\n'));
+  } catch (e) {
+    alert('Failed: ' + e.message);
+  }
+}
+
 async function adminApprovePending(leagueId) {
   if (!confirm('Approve ALL pending members in this league?')) return;
   try {
@@ -1063,6 +1091,7 @@ async function renderAdminDashboard() {
               <button class="btn btn-sm btn-ghost" onclick="navigate('/league/${escapeAttr(lg.id)}')">View league →</button>
               ${lg.pendingCount > 0 ? `<button class="btn btn-sm btn-primary" onclick="adminApprovePending('${escapeAttr(lg.id)}')">Approve all pending</button>` : ''}
               <button class="btn btn-sm btn-ghost" onclick="adminForceAddMember('${escapeAttr(lg.id)}', '${escapeAttr(lg.name)}')">+ Force add member</button>
+              <button class="btn btn-sm btn-ghost" onclick="adminCheckPush('${escapeAttr(lg.id)}', '${escapeAttr(lg.name)}')">🔔 Check notifications</button>
             </div>
           </div>
         </div>
@@ -1477,6 +1506,8 @@ function startLeaguePolling() {
     // pollers were firing on overlapping schedules (15s + 8s), which is what
     // caused the page to visibly jump back to the top roughly every ~10s.
     if (CURRENT_TAB === 'settings' || CURRENT_TAB === 'my-settings' || CURRENT_TAB === 'draft') return;
+    // Also skip if we're on the admin page — it's a separate route, not a league tab
+    if (location.pathname === '/admin') return;
     const el = document.activeElement;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) return;
     await _fetchAndRenderLeague();

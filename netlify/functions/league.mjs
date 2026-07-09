@@ -451,13 +451,24 @@ export default async (req) => {
     if (!newName) return Response.json({ ok: false, error: 'Team name cannot be empty' }, { status: 400 });
     if (newName.length > 30) return Response.json({ ok: false, error: 'Team name max 30 characters' }, { status: 400 });
 
-    // Find this user's current member record
+    // Find this user's member record — try email first, then fall back to
+    // currentManagerName sent by the frontend (handles cases where the member
+    // record was created without an email, e.g. legacy link-member slots)
+    const currentManagerName = String(body.currentManagerName || '').trim();
     const myMember = (league.members || []).find(m =>
-      m.email?.toLowerCase() === session.email?.toLowerCase()
+      (m.email && m.email.toLowerCase() === session.email.toLowerCase()) ||
+      (currentManagerName && m.manager === currentManagerName)
     );
-    if (!myMember || myMember.status !== 'active') {
-      return Response.json({ ok: false, error: 'You are not an active member of this league' }, { status: 403 });
+
+    if (!myMember) {
+      return Response.json({ ok: false, error: 'Could not find your member record in this league. Try refreshing the page.' }, { status: 403 });
     }
+    if (myMember.status !== 'active') {
+      return Response.json({ ok: false, error: 'Your membership is not yet active in this league' }, { status: 403 });
+    }
+
+    // Ensure the email is linked on their record going forward
+    if (!myMember.email) myMember.email = session.email.toLowerCase();
     const oldName = myMember.manager;
     if (oldName === newName) return Response.json({ ok: true, manager: newName }, { headers: NO_CACHE });
 
