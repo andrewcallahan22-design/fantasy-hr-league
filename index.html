@@ -2474,37 +2474,6 @@ function renderRostersEdit(body) {
 
   html += `</tbody></table></div></div>`;
 
-  // ── WAIVER WIRE SECTION ──
-  // Standalone section below the roster — drop a player, pick up a free agent.
-  // Separate from IR. Only shows when waiver wire is enabled in settings.
-  if (canEdit && waiverType !== 'none' && isCurrentMonth) {
-    html += `
-      <div class="panel" style="margin-top:14px">
-        <div class="panel-header">🔄 Waiver wire</div>
-        <div class="panel-body">
-          <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
-            Drop one of your players and pick up a free agent from the undrafted pool.
-            ${waiverType === 'waiver-order' ? 'Claims are processed in waiver order (worst record picks first).' : 'Claims are first-come first-served.'}
-          </p>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            ${roster.map((p, i) => !p.irPlayer && p.player ? `
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(0,0,0,0.2);border-radius:6px;border:1px solid var(--panel-border)">
-                <div>
-                  <span style="font-weight:600;font-size:13px">${escapeHtml(p.player)}</span>
-                  <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${escapeHtml(p.team)} · ${escapeHtml(p.position)} · ${p.hr} HR</span>
-                </div>
-                <button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--orange)"
-                  onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">
-                  Drop &amp; replace →
-                </button>
-              </div>
-            ` : '').join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
   // Past months summary
   if (allMonths.length > 1) {
     html += `
@@ -2590,20 +2559,44 @@ function openWaiverClaim(mgr, slotIndex) {
   const slot = month?.rosters?.[mgr]?.[slotIndex];
   const irRule   = league.settings?.irReplacementRule || 'any-available';
   const sameTeam = slot?.irPlayer && irRule === 'same-team';
+  const positionRule = league.settings?.positionRule || 'one-duplicate-allowed';
 
-  // Build set of all players and teams currently on any roster
+  // Build set of all players/teams already on any roster
   const takenNames = new Set();
-  const takenTeams = new Set();
+  const takenTeams = new Set(); // for all-unique team rule
   for (const [, r] of Object.entries(month?.rosters || {})) {
     for (const p of r) {
       if (p.player)   takenNames.add(normNameFE(p.player));
       if (p.irPlayer) takenNames.add(normNameFE(p.irPlayer));
       if (league.settings?.teamRule === 'all-unique') {
-        if (p.team)     takenTeams.add(p.team.toUpperCase());
-        if (p.irTeam)   takenTeams.add(p.irTeam.toUpperCase());
+        if (p.team)   takenTeams.add(p.team.toUpperCase());
+        if (p.irTeam) takenTeams.add(p.irTeam.toUpperCase());
       }
     }
   }
+
+  // Compute which positions are already at their limit on THIS manager's roster
+  // so we can block those positions in the player picker
+  const myRoster = month?.rosters?.[mgr] || [];
+  const posCounts = {};
+  for (const p of myRoster) {
+    // Count both active and IR player positions (IR player stays on roster logically)
+    const pos = p.irPlayer ? p.irPosition : p.position;
+    if (pos) posCounts[pos] = (posCounts[pos] || 0) + 1;
+  }
+  // The slot being filled is open — don't count it
+  const slotPos = slot?.irPlayer ? slot.irPosition : slot?.position;
+  if (slotPos && posCounts[slotPos] > 0) posCounts[slotPos]--;
+
+  const maxPerPos = positionRule === 'all-unique' ? 1
+    : positionRule === 'unrestricted' ? Infinity
+    : 2; // one-duplicate-allowed
+
+  const blockedPositions = new Set(
+    Object.entries(posCounts)
+      .filter(([, count]) => count >= maxPerPos)
+      .map(([pos]) => pos)
+  );
 
   _waiverSelected = null;
 
@@ -2614,57 +2607,45 @@ function openWaiverClaim(mgr, slotIndex) {
   wrap.innerHTML = `
     <div class="modal" style="max-width:680px;width:100%">
       <div class="modal-head">
-        <div class="modal-title">
-          ${slot?.irPlayer ? `🏥 Pick up IR replacement for ${escapeHtml(slot.irPlayer)}` : `⇄ Pick up a player`}
-        </div>
+        <div class="modal-title">🏥 Pick up replacement for ${escapeHtml(slot?.irPlayer || '?')}</div>
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
       </div>
       <div class="modal-body" style="padding:0">
-        ${slot?.player ? `<div style="padding:10px 16px;background:rgba(239,68,68,0.08);border-bottom:1px solid var(--panel-border);font-size:13px">Dropping: <strong>${escapeHtml(slot.player)}</strong> (${escapeHtml(slot.team)})</div>` : ''}
-        ${sameTeam ? `<div style="padding:8px 16px;background:rgba(240,199,94,0.08);border-bottom:1px solid var(--panel-border);font-size:12px;color:var(--accent)">⚠ Same-team IR rule: must pick from <strong>${escapeHtml(slot.irTeam)}</strong></div>` : ''}
-
-        <!-- Filters -->
-        <div style="padding:12px 16px;border-bottom:1px solid var(--panel-border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input class="input compact" id="waiver-search" placeholder="Search players…" style="max-width:180px"
-            oninput="filterWaiverPool()">
+        <div style="padding:10px 16px;background:rgba(239,68,68,0.06);border-bottom:1px solid var(--panel-border);font-size:12px;color:var(--text-muted)">
+          Picking up a <strong>temporary replacement</strong> for <strong style="color:var(--text)">${escapeHtml(slot?.irPlayer || '')}</strong>
+          ${sameTeam ? ` · <span style="color:var(--accent)">Must be from ${escapeHtml(slot?.irTeam || '')}</span>` : ''}
+          ${blockedPositions.size ? ` · <span style="color:var(--orange)">Blocked positions: ${[...blockedPositions].join(', ')}</span>` : ''}
+        </div>
+        <div style="padding:10px 16px;border-bottom:1px solid var(--panel-border);display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input class="input compact" id="waiver-search" placeholder="Search players…" style="max-width:180px" oninput="filterWaiverPool()">
           <select class="select" id="waiver-pos-filter" style="font-size:12px" onchange="filterWaiverPool()">
             <option value="ALL">All positions</option>
             ${(league.positions||[]).map(p=>`<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`).join('')}
           </select>
           <span style="font-size:11px;color:var(--text-muted)" id="waiver-count"></span>
         </div>
-
-        <!-- Player list -->
-        <div id="waiver-pool-list" style="max-height:400px;overflow-y:auto;padding:0">
-          <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Loading available players…</div>
-        </div>
-
-        <!-- Selected + confirm -->
+        <div id="waiver-pool-list" style="max-height:380px;overflow-y:auto"></div>
         <div style="padding:12px 16px;border-top:1px solid var(--panel-border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <div id="waiver-selection-display" style="flex:1;font-size:13px;color:var(--text-faint)">No player selected</div>
-          <button class="btn btn-primary" id="waiver-confirm-btn" disabled
-            onclick="submitWaiverClaim('${escapeAttr(mgr)}',${slotIndex})">Confirm claim</button>
+          <div id="waiver-selection-display" style="flex:1;font-size:13px;color:var(--text-faint)">Select a player above</div>
+          <button class="btn btn-primary" id="waiver-confirm-btn" disabled onclick="submitWaiverClaim('${escapeAttr(mgr)}',${slotIndex})">Confirm pickup</button>
           <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
         </div>
       </div>
     </div>
   `;
   document.body.appendChild(wrap);
-
-  // Load the player pool — reuse draft pool if available, otherwise fetch
-  loadWaiverPool(league, takenNames, takenTeams, sameTeam ? slot.irTeam : null);
+  loadWaiverPool(league, takenNames, takenTeams, sameTeam ? slot.irTeam : null, blockedPositions);
 }
 
 let _waiverPool = [];
 let _waiverSelected = null;
+let _waiverBlockedPositions = new Set();
 
-async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam) {
+async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, blockedPositions = new Set()) {
   try {
-    // Reuse draft pool if available (already cached from draft tab)
     let pool = window._draftFullPool || [];
 
     if (!pool.length) {
-      // Fetch top 300 hitters from draft endpoint
       const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(league.id)}&fullPool=true`, {
         headers: authHeaders(), cache: 'no-store',
       });
@@ -2672,14 +2653,18 @@ async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam) {
       pool = data.pool || [];
     }
 
-    // Filter to available players only
+    // Filter to eligible players only
     _waiverPool = pool.filter(p => {
       if (!p.name) return false;
       if (takenNames.has(normNameFE(p.name))) return false;
       if (requiredTeam && p.team?.toUpperCase() !== requiredTeam.toUpperCase()) return false;
-      if (takenTeams.has(p.team?.toUpperCase()) && league.settings?.teamRule === 'all-unique') return false;
+      if (takenTeams.has(p.team?.toUpperCase())) return false;
+      if (blockedPositions.has(p.pos)) return false; // position at limit
       return true;
     });
+
+    // Store blocked positions so renderWaiverPool can show why players are hidden
+    _waiverBlockedPositions = blockedPositions;
 
     renderWaiverPool();
   } catch (e) {
