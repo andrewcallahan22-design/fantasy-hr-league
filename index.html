@@ -3558,7 +3558,12 @@ async function saveManagerName() {
     const r = await fetch(API_LEAGUE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ action: 'rename-manager', leagueId, newName }),
+      body: JSON.stringify({
+        action: 'rename-manager',
+        leagueId,
+        newName,
+        currentManagerName: CURRENT_LEAGUE.myManager || '',
+      }),
     });
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Failed to save'; return; }
@@ -4114,21 +4119,18 @@ function renderSettings(body) {
   // Wire up dirty tracking so save button enables only when something changes
   requestAnimationFrame(() => initSettingsDirtyTracking());
 
-  // Silently refresh league data in the background so the commissioner always
-  // sees up-to-date pending requests without having to manually refresh.
-  // Uses a non-rendering fetch so it doesn't wipe unsaved form changes.
+  // Always fetch fresh league data when the commissioner tab opens.
+  // This ensures pending join requests show up immediately without
+  // the commissioner needing to manually refresh.
   if (CURRENT_LEAGUE?.isCommish) {
     fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), {
       headers: authHeaders(), cache: 'no-store'
     }).then(r => r.json()).then(res => {
       if (!res.ok) return;
-      // Only update if pending count changed — avoids re-render on every tab open
-      const newPending = (res.league?.members || []).filter(m => m.status === 'pending').length;
-      const oldPending = (CURRENT_LEAGUE.league?.members || []).filter(m => m.status === 'pending').length;
-      if (newPending !== oldPending) {
-        CURRENT_LEAGUE = res;
-        renderActiveTab();
-      }
+      CURRENT_LEAGUE = res;
+      // Re-render the settings tab with fresh data
+      // but only if we're still on the settings tab
+      if (CURRENT_TAB === 'settings') renderActiveTab();
     }).catch(() => {});
   }
 }
