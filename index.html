@@ -11,6 +11,8 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Go Yard</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="description" content="Go Yard — home run fantasy baseball for your crew. Draft hitters, track HRs in real time, get notified when your players go deep.">
 <meta name="apple-mobile-web-app-title" content="Go Yard">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2876,20 +2878,62 @@ async function makeDraftPick(leagueId, player) {
     });
     const res = await r.json();
     if (!res.ok) {
-      // Roll back optimistic update
+      // Roll back optimistic update and restore scroll
+      const poolContainer = document.getElementById('draft-pool-scroll-container');
+      const savedScroll = poolContainer?.scrollTop || 0;
       _draft = prevDraft;
       renderDraftRoom(document.getElementById('tab-body'));
+      requestAnimationFrame(() => {
+        const c = document.getElementById('draft-pool-scroll-container');
+        if (c) c.scrollTop = savedScroll;
+      });
       alert(res.error || 'Pick failed');
       return;
     }
-    // Server confirmed — do a lightweight state sync to get accurate turn/roster
-    // data without refetching the pool (keeps it fast)
-    await loadDraftState(document.getElementById('tab-body'));
+    // Server confirmed pick. The optimistic render already shows the correct
+    // state, so we DON'T re-render — that's what was causing the scroll reset.
+    // Instead do a silent background state sync so polling has fresh server data,
+    // but only update _draft in memory without touching the DOM at all.
+    silentDraftStateSync(leagueId);
   } catch (e) {
+    const poolContainer = document.getElementById('draft-pool-scroll-container');
+    const savedScroll = poolContainer?.scrollTop || 0;
     _draft = prevDraft;
     renderDraftRoom(document.getElementById('tab-body'));
+    requestAnimationFrame(() => {
+      const c = document.getElementById('draft-pool-scroll-container');
+      if (c) c.scrollTop = savedScroll;
+    });
     alert('Connection failed — try again');
   }
+}
+
+// Syncs draft state from server without touching the DOM.
+// Used after optimistic picks to keep _draft in sync with server truth
+// without causing any visible re-render or scroll position loss.
+async function silentDraftStateSync(leagueId) {
+  try {
+    const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(leagueId)}&stateOnly=true`, {
+      headers: authHeaders(), cache: 'no-store',
+    });
+    const fresh = await r.json();
+    if (!fresh.ok) return;
+    // Merge server state into _draft without triggering any render
+    const basePool = window._draftFullPool || _draft.pool || [];
+    const mergedPool = basePool.map(p => {
+      const norm = normName(p.name);
+      const isPlayerDrafted = !!fresh.draftStatusByName?.[norm];
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team);
+      return {
+        ...p,
+        drafted: isPlayerDrafted || isTeamTaken,
+        draftedBy: isPlayerDrafted ? findDraftedByName(fresh, p.name)
+          : isTeamTaken ? (fresh.draftedTeamToManager?.[p.team] || null) : null,
+        teamTaken: isTeamTaken && !isPlayerDrafted,
+      };
+    });
+    _draft = { ...fresh, pool: mergedPool };
+  } catch {} // non-fatal — polling will catch up
 }
 
 async function undoLastDraftPick(leagueId) {
@@ -2972,16 +3016,15 @@ function renderMySettings(body) {
 
   let installPanel = '';
   if (isStandalone) {
-    // Already installed — show a success state
     installPanel = `
-      <div class="panel">
-        <div class="panel-header">📱 App installed</div>
+      <div class="panel" style="border-color:rgba(58,160,92,0.4)">
+        <div class="panel-header" style="color:var(--green)">✅ Go Yard is installed</div>
         <div class="panel-body">
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:22px">✅</span>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="font-size:32px">⚾</span>
             <div>
-              <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:2px">Go Yard is on your Home Screen</div>
-              <div class="input-help">You're good to go. Push notifications will work from this icon.</div>
+              <div style="font-weight:600;font-size:14px;color:var(--text);margin-bottom:2px">You're running Go Yard from your Home Screen</div>
+              <div class="input-help">Push notifications are fully enabled. You're all set!</div>
             </div>
           </div>
         </div>
@@ -2989,85 +3032,138 @@ function renderMySettings(body) {
     `;
   } else if (isIOS) {
     installPanel = `
-      <div class="panel" style="border-color:rgba(96,165,250,0.35)">
-        <div class="panel-header" style="color:var(--blue)">📱 Add to Home Screen (iPhone)</div>
+      <div class="panel" style="border-color:rgba(96,165,250,0.4)">
+        <div class="panel-header" style="color:#60a5fa">📱 Add Go Yard to your Home Screen — iPhone / iPad</div>
         <div class="panel-body">
-          <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
-            Adding Go Yard to your Home Screen gives you a full-screen app experience and enables push notifications for home runs and draft turns.
-          </p>
-          <div style="display:flex;flex-direction:column;gap:12px">
-            <div style="display:flex;align-items:flex-start;gap:12px">
-              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</span>
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap the Share button</div>
-                <div class="input-help">The Share button is the box with an arrow pointing up — in Safari's bottom toolbar (iPhone) or top toolbar (iPad).</div>
-              </div>
-            </div>
-            <div style="display:flex;align-items:flex-start;gap:12px">
-              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</span>
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap "Add to Home Screen"</div>
-                <div class="input-help">Scroll down in the share sheet until you see "Add to Home Screen" with a plus icon. Tap it.</div>
-              </div>
-            </div>
-            <div style="display:flex;align-items:flex-start;gap:12px">
-              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</span>
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap "Add" and open from your Home Screen</div>
-                <div class="input-help">The name will say "Go Yard". Once you open it from the Home Screen icon, come back here to enable push notifications.</div>
-              </div>
-            </div>
+          <div class="notice warn" style="margin-bottom:16px;margin-top:0">
+            ⚠️ <strong>Important:</strong> Push notifications on iPhone only work when you open Go Yard from the Home Screen icon — not directly from Safari. Complete these steps first, then enable notifications below.
           </div>
-          <div class="notice warn" style="margin-top:14px;margin-bottom:0">
-            ⚠️ Push notifications on iPhone <strong>only work</strong> when you open Go Yard from the Home Screen icon — not from Safari directly.
+
+          <div style="display:flex;flex-direction:column;gap:0">
+            ${[
+              {
+                n: 1,
+                title: 'Open this page in Safari',
+                body: 'Go Yard must be added from Safari — it won\'t work from Chrome or other browsers on iPhone. If you\'re not in Safari right now, copy this URL and paste it into Safari.',
+                icon: '🧭',
+              },
+              {
+                n: 2,
+                title: 'Tap the Share button',
+                body: 'At the bottom of the screen, tap the Share button — it looks like a box with an arrow pointing up ↑. On iPad it\'s at the top of the screen.',
+                icon: '⬆️',
+              },
+              {
+                n: 3,
+                title: 'Scroll down and tap "Add to Home Screen"',
+                body: 'In the share sheet that pops up, scroll down until you see "Add to Home Screen" with a white box and plus sign. Tap it.',
+                icon: '➕',
+              },
+              {
+                n: 4,
+                title: 'Confirm the name "Go Yard" and tap Add',
+                body: 'A dialog appears showing the icon and name. Make sure it says "Go Yard" — then tap "Add" in the top-right corner.',
+                icon: '✅',
+              },
+              {
+                n: 5,
+                title: 'Open Go Yard from your Home Screen',
+                body: 'Find the Go Yard icon on your Home Screen (it has a baseball and bat). Tap it to open — it will open full-screen like a real app. Come back to this Settings page to enable push notifications.',
+                icon: '🏠',
+              },
+            ].map((step, i, arr) => `
+              <div style="display:flex;gap:14px;align-items:flex-start;padding:14px 0;${i < arr.length-1 ? 'border-bottom:1px dashed var(--panel-border)' : ''}">
+                <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0">
+                  <div style="width:30px;height:30px;border-radius:50%;background:rgba(96,165,250,0.15);border:1px solid rgba(96,165,250,0.4);display:flex;align-items:center;justify-content:center;font-family:'Roboto Mono',monospace;font-size:12px;font-weight:700;color:#60a5fa">${step.n}</div>
+                  ${i < arr.length-1 ? '<div style="width:1px;flex:1;background:rgba(96,165,250,0.2);margin-top:4px;min-height:16px"></div>' : ''}
+                </div>
+                <div style="flex:1;padding-bottom:4px">
+                  <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:4px">${step.icon} ${step.title}</div>
+                  <div style="font-size:12px;color:var(--text-muted);line-height:1.6">${step.body}</div>
+                </div>
+              </div>
+            `).join('')}
           </div>
         </div>
       </div>
     `;
   } else if (isAndroid) {
+    // Detect Chrome vs other browsers on Android
+    const isChrome = /chrome/i.test(navigator.userAgent) && !/edg/i.test(navigator.userAgent);
     installPanel = `
-      <div class="panel" style="border-color:rgba(96,165,250,0.35)">
-        <div class="panel-header" style="color:var(--blue)">📱 Add to Home Screen (Android)</div>
+      <div class="panel" style="border-color:rgba(96,165,250,0.4)">
+        <div class="panel-header" style="color:#60a5fa">📱 Add Go Yard to your Home Screen — Android${isChrome ? ' (Chrome)' : ''}</div>
         <div class="panel-body">
-          <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
-            Install Go Yard as an app for the best experience and push notifications.
-          </p>
-          <div style="display:flex;flex-direction:column;gap:12px">
-            <div style="display:flex;align-items:flex-start;gap:12px">
-              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">1</span>
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap the three-dot menu</div>
-                <div class="input-help">In Chrome, tap the ⋮ menu in the top-right corner of the browser.</div>
+          <div style="display:flex;flex-direction:column;gap:0">
+            ${[
+              {
+                n: 1,
+                title: 'Open this page in Chrome',
+                body: 'Chrome on Android has the best support for adding web apps. If you\'re using a different browser, try opening this URL in Chrome.',
+                icon: '🌐',
+              },
+              {
+                n: 2,
+                title: 'Tap the three-dot menu ⋮',
+                body: 'In Chrome, tap the three vertical dots in the top-right corner of the browser to open the menu.',
+                icon: '⋮',
+              },
+              {
+                n: 3,
+                title: 'Tap "Add to Home screen" or "Install app"',
+                body: 'Look for "Add to Home screen" in the menu. Some versions of Chrome show "Install app" instead — either works. Tap it.',
+                icon: '➕',
+              },
+              {
+                n: 4,
+                title: 'Tap "Add" to confirm',
+                body: 'A dialog appears with the Go Yard icon and name. Tap "Add" to place it on your Home Screen.',
+                icon: '✅',
+              },
+              {
+                n: 5,
+                title: 'Open from your Home Screen',
+                body: 'Find the Go Yard icon on your Home Screen or in your app drawer. Open it from there — it launches full-screen. Then come back to Settings to enable push notifications.',
+                icon: '🏠',
+              },
+            ].map((step, i, arr) => `
+              <div style="display:flex;gap:14px;align-items:flex-start;padding:14px 0;${i < arr.length-1 ? 'border-bottom:1px dashed var(--panel-border)' : ''}">
+                <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0">
+                  <div style="width:30px;height:30px;border-radius:50%;background:rgba(96,165,250,0.15);border:1px solid rgba(96,165,250,0.4);display:flex;align-items:center;justify-content:center;font-family:'Roboto Mono',monospace;font-size:12px;font-weight:700;color:#60a5fa">${step.n}</div>
+                  ${i < arr.length-1 ? '<div style="width:1px;flex:1;background:rgba(96,165,250,0.2);margin-top:4px;min-height:16px"></div>' : ''}
+                </div>
+                <div style="flex:1;padding-bottom:4px">
+                  <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:4px">${step.icon} ${step.title}</div>
+                  <div style="font-size:12px;color:var(--text-muted);line-height:1.6">${step.body}</div>
+                </div>
               </div>
-            </div>
-            <div style="display:flex;align-items:flex-start;gap:12px">
-              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">2</span>
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Tap "Add to Home screen"</div>
-                <div class="input-help">You may also see "Install app" — either works. Tap it and confirm.</div>
-              </div>
-            </div>
-            <div style="display:flex;align-items:flex-start;gap:12px">
-              <span style="font-family:'Roboto Mono',monospace;font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0">3</span>
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px">Open from your Home Screen</div>
-                <div class="input-help">Go Yard will appear on your home screen. Open it from there, then enable notifications in this Settings tab.</div>
-              </div>
-            </div>
+            `).join('')}
           </div>
         </div>
       </div>
     `;
   } else {
-    // Desktop — still useful to show the install panel for Chromium-based browsers
+    // Desktop
     installPanel = `
       <div class="panel">
-        <div class="panel-header">💻 Install on desktop (optional)</div>
+        <div class="panel-header">💻 Install Go Yard on desktop (optional)</div>
         <div class="panel-body">
-          <p style="font-size:13px;color:var(--text-dim);margin-bottom:10px">
-            In Chrome or Edge, you can install Go Yard as a desktop app. Look for an install icon (⊕) in the address bar, or go to the browser menu → "Install Go Yard".
-          </p>
-          <div class="input-help">Push notifications work in desktop Chrome and Edge without installing — just enable them in the notifications panel below.</div>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;gap:12px;align-items:flex-start">
+              <span style="font-size:20px">🌐</span>
+              <div>
+                <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:3px">Chrome or Edge</div>
+                <div style="font-size:12px;color:var(--text-muted);line-height:1.5">Look for an install icon (⊕) in the address bar on the right side. Or go to the browser menu → "Install Go Yard". Once installed, it opens in its own window without browser chrome.</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:12px;align-items:flex-start">
+              <span style="font-size:20px">🔔</span>
+              <div>
+                <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:3px">Push notifications on desktop</div>
+                <div style="font-size:12px;color:var(--text-muted);line-height:1.5">You don't need to install Go Yard to get push notifications on desktop — just enable them in the Notifications section below.</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     `;

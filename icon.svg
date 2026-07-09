@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Dark background -->
+  <rect width="512" height="512" rx="112" fill="#050810"/>
+  
+  <!-- Baseball (white circle with red stitching) -->
+  <circle cx="300" cy="180" r="90" fill="white"/>
+  <!-- Left stitching arc -->
+  <path d="M240 155 Q255 180 240 205" fill="none" stroke="#cc2222" stroke-width="7" stroke-linecap="round"/>
+  <path d="M236 158 L244 152 M236 168 L244 162 M236 178 L244 172 M236 188 L244 182 M236 198 L244 192 M236 208 L244 202" stroke="#cc2222" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Right stitching arc -->
+  <path d="M360 155 Q345 180 360 205" fill="none" stroke="#cc2222" stroke-width="7" stroke-linecap="round"/>
+  <path d="M364 158 L356 152 M364 168 L356 162 M364 178 L356 172 M364 188 L356 182 M364 198 L356 192 M364 208 L356 202" stroke="#cc2222" stroke-width="3.5" stroke-linecap="round"/>
+  
+  <!-- Baseball bat (diagonal, lower-left to upper-right) -->
+  <!-- Bat barrel -->
+  <rect x="60" y="290" width="52" height="160" rx="26" fill="#c8a46e" transform="rotate(-45 136 370)"/>
+  <!-- Bat handle taper -->
+  <rect x="60" y="290" width="28" height="100" rx="14" fill="#a0784a" transform="rotate(-45 136 370)"/>
+  <!-- Bat knob -->
+  <circle cx="105" cy="415" r="18" fill="#8a6035" transform="rotate(-45 136 370) translate(0 0)"/>
+  
+  <!-- Gold accent star/sparkle for "Go Yard" energy -->
+  <circle cx="175" cy="155" r="12" fill="#f0c75e" opacity="0.9"/>
+  <circle cx="155" cy="230" r="8" fill="#f0c75e" opacity="0.7"/>
+  <circle cx="125" cy="175" r="6" fill="#f0c75e" opacity="0.6"/>
+</svg>
