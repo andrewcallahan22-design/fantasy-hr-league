@@ -91,6 +91,8 @@ body::before {
   white-space: nowrap;
 }
 .brand-title em { font-style: normal; color: var(--accent); }
+.player-link { background:none;border:none;padding:0;cursor:pointer;color:var(--accent);font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(240,199,94,0.4); }
+.player-link:hover { color:#fff;text-decoration-color:rgba(255,255,255,0.6); }
 .header-right { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 .account-chip {
   font-size: 12px; color: var(--accent);
@@ -1754,8 +1756,8 @@ function renderScoreboard(body) {
                   : `<span style="color:var(--text-faint);font-size:11px">—</span>`;
                 return `<tr>
                   <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">
-                    <button onclick="openPlayerProfile(${JSON.stringify(p.player)}, null)" style="background:none;border:none;padding:0;text-align:left;cursor:pointer;color:inherit;font:inherit;width:100%">
-                      <strong style="font-size:13px;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2)">${escapeHtml(p.player)}</strong>${badge}${healthBadge}
+                    <button onclick="openPlayerProfile('${escapeAttr(p.player)}', null)" title="Tap for player profile" class="player-link" style="text-align:left;width:100%">
+                      <strong style="font-size:13px">${escapeHtml(p.player)}</strong>${badge}${healthBadge}
                     </button>
                     ${seasonLine}
                   </td>
@@ -1993,7 +1995,7 @@ function renderStandings(body) {
                   ${roster.map(p => p.player ? `
                     <tr>
                       <td>
-                        <button onclick="openPlayerProfile(${JSON.stringify(p.player)}, null)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2)">${escapeHtml(p.player)}</button>
+                        <button onclick="openPlayerProfile('${escapeAttr(p.player)}', null)" style="background:none;border:none;padding:0;cursor:pointer;color:var(--accent);font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(240,199,94,0.4)">${escapeHtml(p.player)}</button>
                       </td>
                       <td><span class="team-chip" style="font-size:10px">${escapeHtml(p.team || '—')}</span></td>
                       <td><span class="pos-chip" style="font-size:10px">${escapeHtml(p.position || p.pos || '—')}</span></td>
@@ -2606,7 +2608,7 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
     return `<tr style="${rowStyle}">
       <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${p.rank || i + 1}</td>
       <td style="font-weight:600;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        <button onclick="openPlayerProfile(${JSON.stringify(p.name)}, ${p.id || null})" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</button>
+        <button onclick="openPlayerProfile('${escapeAttr(p.name)}', ${p.id || null})" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</button>
       </td>
       <td><span class="team-chip" style="font-size:9px;${isTeamTaken ? 'text-decoration:line-through;opacity:0.5' : ''}">${escapeHtml(p.team)}</span></td>
       <td><span class="pos-chip" style="font-size:9px;${posBlocked ? 'background:rgba(239,68,68,0.15);color:var(--red)' : ''}">${escapeHtml(p.pos)}</span></td>
@@ -4066,7 +4068,6 @@ async function openPlayerProfile(playerName, mlbId) {
     const res = await r.json();
     if (!res.ok) throw new Error(res.error || 'Player not found');
     const p = res.player;
-
     const healthColor = p.health === 'IL' ? 'var(--red)' : 'var(--green)';
     const healthLabel = p.health === 'Active' ? '✓ Active' : `⚠ ${p.health}${p.healthDetail ? ` — ${p.healthDetail}` : ''}`;
 
