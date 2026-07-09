@@ -89,23 +89,22 @@ export default async (req) => {
 
   if (body.action === 'send-test') {
     const { sendPush } = await import('./lib/webpush.mjs');
-    const subs = await loadSubs();
     const userSubs = subs[email] || [];
     if (!userSubs.length) {
-      return Response.json({ ok: false, error: `No push subscriptions found for ${email}. Enable notifications in ⚙ Settings first.` });
+      return Response.json({ ok: false, error: `No push subscriptions found for ${email}. Try turning notifications off and back on in ⚙ Settings.` });
     }
     let sent = 0;
     const dead = [];
     for (const sub of userSubs) {
       const res = await sendPush(sub, JSON.stringify({
         title: '⚾ Go Yard test notification',
-        body: `Push notifications are working for ${email}!`,
+        body: `Push is working for ${email}! You'll get notified on every HR.`,
         url: '/',
       }), { ttl: 60, urgency: 'high' });
       if (res.ok) sent++;
       else if (res.status === 404 || res.status === 410) dead.push(sub.endpoint);
+      else console.warn(`[push:test] delivery failed status=${res.status} for ${email}`);
     }
-    // Prune dead subs
     if (dead.length) {
       subs[email] = userSubs.filter(s => !dead.includes(s.endpoint));
       await saveSubs(subs);
