@@ -12,11 +12,12 @@
 import {
   loadLeague, saveLeague, listLeagues, addLeagueToIndex,
   newLeagueId, newInviteToken, ensureLegacyMigrated,
-  makeBlankSettings,
+  makeBlankSettings, getUser, saveUser,
 } from './lib/storage.mjs';
 import {
   verifyAuth, managerForUser, isCommissioner,
 } from './lib/auth.mjs';
+import { normName } from './lib/core.mjs';
 
 const NO_CACHE = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
@@ -342,7 +343,7 @@ export default async (req) => {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {
       return Response.json({ ok: false, error: 'Only the commissioner can change settings' }, { status: 403 });
     }
-    const allowedKeys = ['rosterSize','scoringCategories','positionsAllowed','positionRule','teamRule','multiPlayerPerTeam','redraftCadence','maxManagers'];
+    const allowedKeys = ['rosterSize','scoringCategories','positionsAllowed','positionRule','teamRule','multiPlayerPerTeam','redraftCadence','maxManagers','irSlots','irReplacementRule','waiverType'];
     for (const key of allowedKeys) {
       if (body.settings && body.settings[key] !== undefined) {
         league.settings[key] = body.settings[key];
@@ -382,13 +383,14 @@ export default async (req) => {
   // The frontend posts a "delta" — slot edits keyed by manager + slotIndex.
   // We accept the change only if the user is allowed to edit that manager's roster.
   if (body.action === 'save-state') {
+    // Only commissioners and admins can edit rosters or HR counts.
+    // Regular managers have read-only access — the sync handles HR tracking automatically.
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can edit rosters' }, { status: 403 });
+    }
     const edits = body.edits || []; // array of { manager, slotIndex, field, value }
     for (const edit of edits) {
       const targetMgr = edit.manager;
-      const targetEmail = (league.members || []).find(m => m.manager === targetMgr)?.email;
-      const allowedOwn = session.email === targetEmail?.toLowerCase();
-      const allowedCommish = isCommissioner(league, session.email);
-      if (!allowedOwn && !allowedCommish && !session.isAdmin) continue; // silently skip unauthorized edits
 
       const cm = body.month || league.currentMonth;
       if (!league.months[cm]?.rosters?.[targetMgr]) continue;
@@ -404,7 +406,6 @@ export default async (req) => {
           league.changeLog.push({ t: Date.now(), player: slot.player || '?', delta: newVal - before, mgr: targetMgr, month: cm, src: 'manual' });
           if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
           // Move baseline so next sync doesn't re-add the same HRs
-          const { normName } = await import('./lib/core.mjs');
           const nk = normName(slot.player || '');
           if (nk && league.seasonHints?.[nk] !== undefined && league.seasonBaseline?.[nk] !== undefined) {
             league.seasonBaseline[nk] = league.seasonHints[nk] - newVal;
@@ -414,7 +415,6 @@ export default async (req) => {
         slot[edit.field] = String(edit.value || '');
         if (edit.field === 'player') {
           // Reset baseline so a new player anchors cleanly on next sync
-          const { normName } = await import('./lib/core.mjs');
           const nk = normName(slot.player || '');
           if (nk && league.seasonBaseline) delete league.seasonBaseline[nk];
         }
@@ -514,6 +514,160 @@ export default async (req) => {
     return Response.json({ ok: true, manager: newName }, { headers: NO_CACHE });
   }
 
+  // ── MOVE TO IR ──
+  // Moves a player from a roster slot to an IR slot.
+  // Requirements: player must have IL/hurt health status.
+  // Their existing HRs carry over. An IR slot is created on the roster
+  // with type='ir' to hold the player.
+  if (body.action === 'move-to-ir') {
+    const myMember = (league.members || []).find(m =>
+      m.email?.toLowerCase() === session.email.toLowerCase() || m.manager === body.manager
+    );
+    if (!myMember || myMember.status !== 'active') {
+      return Response.json({ ok: false, error: 'Not an active member' }, { status: 403 });
+    }
+    const mgr = myMember.manager;
+    const irSlots = parseInt(league.settings?.irSlots) || 0;
+    if (!irSlots) return Response.json({ ok: false, error: 'IR slots not enabled in this league' }, { status: 400 });
+
+    const cm = league.currentMonth;
+    const roster = league.months[cm]?.rosters[mgr] || [];
+    const slotIdx = parseInt(body.slotIndex);
+    const slot = roster[slotIdx];
+    if (!slot?.player) return Response.json({ ok: false, error: 'No player in that slot' }, { status: 400 });
+
+    // Verify player is actually injured (health must contain IL or similar)
+    const nk = normName(slot.player);
+    const health = league.health?.[nk] || '';
+    const isHurt = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') ||
+                   health.toLowerCase().includes('day') || body.forceCommish;
+    if (!isHurt && !isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: `${slot.player} must be on the IL to move to IR` }, { status: 400 });
+    }
+
+    // Check IR slot count
+    const existingIR = roster.filter(s => s.irPlayer).length;
+    if (existingIR >= irSlots) {
+      return Response.json({ ok: false, error: `You've used all ${irSlots} IR slot(s)` }, { status: 400 });
+    }
+
+    // Move player to IR — mark original slot as IR, preserve HRs
+    slot.irPlayer = slot.player;
+    slot.irTeam = slot.team;
+    slot.irPosition = slot.position;
+    slot.irHr = slot.hr; // HRs they earned before going to IR
+    slot.irMovedAt = Date.now();
+    slot.player = ''; // Open for replacement
+    slot.team = '';
+    slot.position = '';
+    // Keep slot.hr — this will accumulate replacement player HRs
+    // irHr is what counts from the original player
+
+    await saveLeague(league);
+    return Response.json({ ok: true }, { headers: NO_CACHE });
+  }
+
+  // ── RETURN FROM IR ──
+  // Moves the IR player back to their original slot (drops the replacement).
+  if (body.action === 'return-from-ir') {
+    const myMember = (league.members || []).find(m =>
+      m.email?.toLowerCase() === session.email.toLowerCase() || m.manager === body.manager
+    );
+    if (!myMember || myMember.status !== 'active') {
+      return Response.json({ ok: false, error: 'Not an active member' }, { status: 403 });
+    }
+    const mgr = myMember.manager;
+    const cm = league.currentMonth;
+    const roster = league.months[cm]?.rosters[mgr] || [];
+    const slotIdx = parseInt(body.slotIndex);
+    const slot = roster[slotIdx];
+    if (!slot?.irPlayer) return Response.json({ ok: false, error: 'No IR player in that slot' }, { status: 400 });
+
+    // Restore original player — replacement player HRs stay counted via slot.hr
+    slot.player = slot.irPlayer;
+    slot.team = slot.irTeam;
+    slot.position = slot.irPosition;
+    // Total HRs = replacement HRs (slot.hr) + original player IR HRs (slot.irHr)
+    slot.hr = (parseInt(slot.hr) || 0) + (parseInt(slot.irHr) || 0);
+    delete slot.irPlayer;
+    delete slot.irTeam;
+    delete slot.irPosition;
+    delete slot.irHr;
+    delete slot.irMovedAt;
+
+    await saveLeague(league);
+    return Response.json({ ok: true }, { headers: NO_CACHE });
+  }
+
+  // ── WAIVER CLAIM ──
+  // Manager drops one of their current players and picks up a free agent.
+  // 'same-team' rule: replacement must be from the same team as the dropped player.
+  // 'any-available' rule: any undrafted player is eligible.
+  if (body.action === 'waiver-claim') {
+    const myMember = (league.members || []).find(m =>
+      m.email?.toLowerCase() === session.email.toLowerCase() || m.manager === body.manager
+    );
+    if (!myMember || myMember.status !== 'active') {
+      return Response.json({ ok: false, error: 'Not an active member' }, { status: 403 });
+    }
+    const mgr = myMember.manager;
+    const cm = league.currentMonth;
+    const roster = league.months[cm]?.rosters[mgr] || [];
+    const slotIdx = parseInt(body.slotIndex);
+    const slot = roster[slotIdx];
+    if (!slot) return Response.json({ ok: false, error: 'Invalid slot' }, { status: 400 });
+
+    const pickupPlayer = String(body.pickupPlayer || '').trim();
+    const pickupTeam   = String(body.pickupTeam   || '').trim();
+    const pickupPos    = String(body.pickupPos    || '').trim();
+    if (!pickupPlayer) return Response.json({ ok: false, error: 'Must specify a player to pick up' }, { status: 400 });
+
+    // Verify the player isn't already on any roster this month
+    const pickupNorm = normName(pickupPlayer);
+    for (const [mgrName, mgrRoster] of Object.entries(league.months[cm].rosters || {})) {
+      const taken = mgrRoster.some(s => normName(s.player || '') === pickupNorm || normName(s.irPlayer || '') === pickupNorm);
+      if (taken) return Response.json({ ok: false, error: `${pickupPlayer} is already on ${mgrName}'s roster` }, { status: 400 });
+    }
+
+    // IR replacement rule: same-team requires pickup to match the IR player's team
+    if (slot.irPlayer && league.settings?.irReplacementRule === 'same-team') {
+      if (pickupTeam.toUpperCase() !== slot.irTeam?.toUpperCase()) {
+        return Response.json({ ok: false, error: `IR replacement must be from ${slot.irTeam} (same team rule)` }, { status: 400 });
+      }
+    }
+
+    // Team rule: enforce league's team uniqueness rule
+    const teamRule = league.settings?.teamRule || 'all-unique';
+    if (teamRule === 'all-unique') {
+      for (const [mgrName, mgrRoster] of Object.entries(league.months[cm].rosters || {})) {
+        const teamTaken = mgrRoster.some(s =>
+          (s.team || '').toUpperCase() === pickupTeam.toUpperCase() &&
+          normName(s.player || '') !== pickupNorm
+        );
+        if (teamTaken) return Response.json({ ok: false, error: `A player from ${pickupTeam} is already in the league (all-unique team rule)` }, { status: 400 });
+      }
+    }
+
+    // Log the drop
+    const droppedPlayer = slot.player;
+    league.changeLog = league.changeLog || [];
+    league.changeLog.push({ t: Date.now(), type: 'waiver', dropped: droppedPlayer, picked: pickupPlayer, mgr, month: cm });
+    if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
+
+    // Swap in the pickup player — reset HR to 0 (they start fresh from waiver)
+    slot.player = pickupPlayer;
+    slot.team = pickupTeam;
+    slot.position = pickupPos;
+    slot.hr = 0;
+    // Reset baseline so next sync anchors correctly
+    if (league.seasonBaseline && pickupNorm) {
+      delete league.seasonBaseline[pickupNorm];
+    }
+
+    await saveLeague(league);
+    return Response.json({ ok: true }, { headers: NO_CACHE });
+  }
+
   // ── SET RIVAL MESSAGE (per-league trash talk) ──
   // Stores the manager's custom rival notification message on their member
   // record in this specific league. Separate from the global account setting.
@@ -529,7 +683,6 @@ export default async (req) => {
     // If applyToAll is set, also update the message on the user's account
     // so it becomes the default for all leagues that don't have a specific override
     if (body.applyToAll) {
-      const { getUser, saveUser } = await import('./lib/storage.mjs');
       const user = await getUser(session.email);
       if (user) await saveUser({ ...user, rivalMessage: msg });
     }

@@ -1537,7 +1537,8 @@ async function renderLeague(leagueId, tab) {
     startLeaguePolling();
   } catch (e) {
     setSyncUI('err', 'Connection failed');
-    document.getElementById('view').innerHTML = `<div class="container"><div class="notice err">Couldn't load the league.</div></div>`;
+    console.error('renderLeague error:', e.message, e.stack);
+    document.getElementById('view').innerHTML = `<div class="container"><div class="notice err">Couldn't load the league: ${escapeHtml(e.message)}</div></div>`;
   }
 }
 

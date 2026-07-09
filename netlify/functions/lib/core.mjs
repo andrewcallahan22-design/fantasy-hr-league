@@ -9,21 +9,42 @@ export function normName(n) {
 }
 
 const VERIFIED_IDS = {
-  'aaron judge':      592450,
-  'shohei ohtani':    660271,
-  'nick kurtz':       701762,
-  'kyle schwarber':   656941,
-  'mike trout':       545361,
-  'mookie betts':     605141,
-  'freddie freeman':  518692,
-  'bryce harper':     547180,
-  'pete alonso':      624413,
-  'byron buxton':     621439,
-  'cal raleigh':      663728,
-  'julio rodriguez':  677594,
-  'yordan alvarez':   670541,
+  // AL East
+  'aaron judge':          592450,
+  'juan soto':            665742,
+  'cal raleigh':          663728,
+  'junior caminero':      691406,
   'vladimir guerrero jr': 665489,
-  'jose ramirez':     608070,
+  // AL Central
+  'jose ramirez':         608070,
+  'mike trout':           545361,
+  'yordan alvarez':       670541,
+  'julio rodriguez':      677594,
+  // AL West
+  'shohei ohtani':        660271,
+  'kyle tucker':          663656,
+  // NL East
+  'pete alonso':          624413,
+  'bryce harper':         547180,
+  'kyle schwarber':       656941,
+  'matt olson':           621566,
+  // NL Central
+  'nick kurtz':           701762,
+  // NL West
+  'mookie betts':         605141,
+  'freddie freeman':      518692,
+  'nolan arenado':        571448,
+  // Other commonly drafted
+  'byron buxton':         621439,
+  'bo bichette':          666182,
+  'trea turner':          607208,
+  'marcus semien':        543760,
+  'teoscar hernandez':    606192,
+  'austin riley':         663586,
+  'william contreras':    661388,
+  'adolis garcia':        666969,
+  'gunnar henderson':     683002,
+  'corey seager':         608369,
 };
 
 async function resolvePlayerId(league, playerName) {
@@ -44,24 +65,54 @@ async function resolvePlayerId(league, playerName) {
 
 async function fetchGameLogStats(league, playerName, season) {
   const id = await resolvePlayerId(league, playerName);
-  const url = `https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=gameLog&group=hitting&season=${season}`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`MLB gameLog ${resp.status}`);
-  const data = await resp.json();
+
+  // Fetch game log (finalized stats) and today's live game stats in parallel.
+  // The game log only updates after a game ends, so for in-progress games we
+  // also check the live boxscore endpoint which updates pitch-by-pitch.
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [gameLogResp, liveResp] = await Promise.all([
+    fetch(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=gameLog&group=hitting&season=${season}`),
+    fetch(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=gameLog&group=hitting&season=${season}&startDate=${today}&endDate=${today}`),
+  ]);
+
+  if (!gameLogResp.ok) throw new Error(`MLB gameLog ${gameLogResp.status}`);
+  const data = await gameLogResp.json();
   const splits = data?.stats?.[0]?.splits || [];
 
+  // Also get today's live stats — the regular game log may not yet include
+  // in-progress game HRs, but this endpoint does
+  let todayHR = 0;
+  if (liveResp.ok) {
+    const liveData = await liveResp.json();
+    const liveSplits = liveData?.stats?.[0]?.splits || [];
+    todayHR = liveSplits.reduce((s, g) => s + (parseInt(g?.stat?.homeRuns) || 0), 0);
+  }
+
   const now = Date.now();
-  const cutoff7d  = new Date(now - 7  * 86400000).toISOString().slice(0, 10);
-  const cutoff3d  = new Date(now - 3  * 86400000).toISOString().slice(0, 10);
+  const cutoff7d = new Date(now - 7  * 86400000).toISOString().slice(0, 10);
+  const cutoff3d = new Date(now - 3  * 86400000).toISOString().slice(0, 10);
 
   let last7 = 0, last24h = 0, seasonHR = 0;
+  const countedDates = new Set();
   for (const s of splits) {
     const hr   = parseInt(s?.stat?.homeRuns) || 0;
     const date = s.date || '';
     seasonHR += hr;
-    if (date >= cutoff7d)  last7   += hr;
-    if (date >= cutoff3d)  last24h += hr; // stored as last24h but now tracks 3-day window
+    countedDates.add(date);
+    if (date >= cutoff7d) last7   += hr;
+    if (date >= cutoff3d) last24h += hr;
   }
+
+  // Add today's live HRs if the game log doesn't already include today
+  // (i.e. the game is still in progress and not yet finalized)
+  if (!countedDates.has(today) && todayHR > 0) {
+    console.log(`[sync] Live HR detected for ${playerName}: ${todayHR} HR today (not yet in game log)`);
+    seasonHR += todayHR;
+    last7    += todayHR;
+    last24h  += todayHR;
+  }
+
   return { last7, last24h, seasonHR };
 }
 
@@ -239,10 +290,15 @@ export async function runSyncForLeague(leagueId) {
 
     const baseline = league.seasonBaseline[nk];
     if (baseline === undefined) {
+      // First time seeing this player — set baseline, no notification
+      console.log(`[sync:${league.id}] Baseline set for ${r.player}: ${r.seasonHR} HR`);
       league.seasonBaseline[nk] = r.seasonHR;
       continue;
     }
     const delta = r.seasonHR - baseline;
+    if (delta !== 0) {
+      console.log(`[sync:${league.id}] HR delta detected for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
+    }
     if (delta !== 0) {
       for (const mgr of league.managers) {
         for (const slot of (league.months[key].rosters[mgr] || [])) {
