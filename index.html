@@ -3275,10 +3275,10 @@ function renderMySettings(body) {
               const hasAccountDefault = SESSION.rivalMessage;
               return `
                 ${hasLeagueOverride ? `
-                  <div style="font-size:11px;color:var(--green);margin-bottom:6px">✓ Custom message set for <strong>${escapeHtml(league.name)}</strong></div>
+                  <div id="rival-override-status" style="font-size:11px;color:var(--green);margin-bottom:6px">✓ Custom message set for <strong>${escapeHtml(league.name)}</strong></div>
                 ` : hasAccountDefault ? `
-                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Using your default message — you can set a custom one for this league below</div>
-                ` : ''}
+                  <div id="rival-override-status" style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Using your default message — you can set a custom one for this league below</div>
+                ` : '<div id="rival-override-status"></div>'}
                 <input class="input" id="rival-message-input"
                   value="${escapeAttr(displayVal)}"
                   maxlength="120"
@@ -3361,20 +3361,32 @@ async function saveRivalMessage(applyToAll) {
     // Update session account-level if applying to all
     if (applyToAll) setSession({ ...SESSION, rivalMessage: msg });
 
-    // Update local league member record so the UI re-renders correctly
+    // Update local league member record in memory.
+    // Match by email first, then fall back to manager name since non-commissioners
+    // don't get email fields returned on other members' records.
+    const myMgr = CURRENT_LEAGUE.myManager;
     const myMember = (CURRENT_LEAGUE.league.members || []).find(m =>
-      m.email?.toLowerCase() === SESSION.email?.toLowerCase()
+      (m.email?.toLowerCase() === SESSION.email?.toLowerCase()) ||
+      (m.manager === myMgr)
     );
     if (myMember) myMember.rivalMessage = msg;
 
+    // Show confirmation without re-rendering the whole page
+    // (re-rendering wipes the input field since the member record lookup
+    // was failing silently and showing the old stale value)
     if (err) {
       err.style.color = 'var(--green)';
       err.style.fontWeight = '600';
       err.textContent = applyToAll ? '✓ Applied to all your leagues' : `✓ Saved for ${CURRENT_LEAGUE.league.name}`;
       setTimeout(() => { if (err) { err.textContent = ''; err.style.color = ''; err.style.fontWeight = ''; } }, 3000);
     }
-    // Re-render settings so the override indicator updates
-    renderActiveTab();
+
+    // Update just the status indicator without rebuilding the whole form
+    const statusEl = document.getElementById('rival-override-status');
+    if (statusEl && msg) {
+      statusEl.style.color = 'var(--green)';
+      statusEl.textContent = `✓ Custom message set for ${CURRENT_LEAGUE.league.name}`;
+    }
   } catch (e) {
     if (err) err.textContent = 'Connection failed';
   }
@@ -3396,11 +3408,24 @@ async function clearLeagueRivalMessage() {
     const res = await r.json();
     if (!res.ok) { if (err) err.textContent = res.error || 'Failed'; return; }
 
+    const myMgr = CURRENT_LEAGUE.myManager;
     const myMember = (CURRENT_LEAGUE.league.members || []).find(m =>
-      m.email?.toLowerCase() === SESSION.email?.toLowerCase()
+      (m.email?.toLowerCase() === SESSION.email?.toLowerCase()) ||
+      (m.manager === myMgr)
     );
     if (myMember) delete myMember.rivalMessage;
-    renderActiveTab();
+
+    // Update the input to show account default, update status inline
+    const input = document.getElementById('rival-message-input');
+    if (input) input.value = SESSION.rivalMessage || '';
+    const statusEl = document.getElementById('rival-override-status');
+    if (statusEl) {
+      statusEl.style.color = 'var(--text-muted)';
+      statusEl.textContent = SESSION.rivalMessage
+        ? 'Using your default message — you can set a custom one for this league below'
+        : '';
+    }
+    updateRivalPreview(SESSION.rivalMessage || '');
   } catch (e) {
     if (err) err.textContent = 'Connection failed';
   }
