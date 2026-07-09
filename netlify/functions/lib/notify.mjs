@@ -22,11 +22,16 @@ export function normName(n) {
 }
 
 function inQuietHours(now = new Date()) {
+  // Quiet hours: midnight–8am PT only.
+  // Previously 11pm–9am, but west coast games end at 10-11pm PT and the
+  // MLB API often doesn't finalize stats until the game is fully over —
+  // meaning a 9pm HR might not be detected until 11pm+ when the sync runs.
+  // Shifting to midnight–8am ensures late-night game HRs still fire notifications.
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
   });
   const hour = parseInt(fmt.format(now));
-  return hour >= 23 || hour < 9;
+  return hour >= 0 && hour < 8; // midnight to 8am PT only
 }
 
 async function loadSubs()  { return (await getStore('league').get('pushSubs',  { type: 'json' })) || {}; }

@@ -9,9 +9,21 @@ export function normName(n) {
 }
 
 const VERIFIED_IDS = {
-  'aaron judge':  592450,
-  'shohei ohtani': 660271,
-  'nick kurtz':   701762,
+  'aaron judge':      592450,
+  'shohei ohtani':    660271,
+  'nick kurtz':       701762,
+  'kyle schwarber':   656941,
+  'mike trout':       545361,
+  'mookie betts':     605141,
+  'freddie freeman':  518692,
+  'bryce harper':     547180,
+  'pete alonso':      624413,
+  'byron buxton':     621439,
+  'cal raleigh':      663728,
+  'julio rodriguez':  677594,
+  'yordan alvarez':   670541,
+  'vladimir guerrero jr': 665489,
+  'jose ramirez':     608070,
 };
 
 async function resolvePlayerId(league, playerName) {
@@ -265,11 +277,16 @@ export async function runSyncForLeague(leagueId) {
 
   if (needsNotification) {
     try {
+      console.log(`[sync:${league.id}] Dispatching notifications — ${hrEvents.length} HR events`);
+      hrEvents.forEach(ev => console.log(`  HR: ${ev.player} +${ev.delta} for ${ev.mgr}`));
       const { dispatchNotifications } = await import('./notify.mjs');
-      await dispatchNotifications({ league, hrEvents, leaderBefore, leaderAfter });
+      const notifResult = await dispatchNotifications({ league, hrEvents, leaderBefore, leaderAfter });
+      console.log(`[sync:${league.id}] Notification result:`, JSON.stringify(notifResult));
     } catch (e) {
       console.warn('Notification dispatch failed (non-fatal):', e.message);
     }
+  } else {
+    console.log(`[sync:${league.id}] No notifications needed (no HR events, no leader change)`);
   }
 
   return { ok: true, added, failed, ts: league.lastSync, leagueId };
