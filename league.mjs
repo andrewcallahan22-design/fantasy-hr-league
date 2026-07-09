@@ -1,4 +1,4 @@
-// League endpoint — multi-tenant CRUD.
+// League endpoint — multi-tenant CRUD. VERSION: 2026-07-09-ir-waiver
 // GET  /.netlify/functions/league                 → list current user's leagues
 // GET  /.netlify/functions/league?id=ID           → load full league state
 // GET  /.netlify/functions/league?invite=TOKEN    → public preview for join page
@@ -344,14 +344,17 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Only the commissioner can change settings' }, { status: 403 });
     }
     const allowedKeys = ['rosterSize','scoringCategories','positionsAllowed','positionRule','teamRule','multiPlayerPerTeam','redraftCadence','maxManagers','irSlots','irReplacementRule','waiverType'];
+    console.log('[settings] received:', JSON.stringify(body.settings));
+    console.log('[settings] before save irSlots:', league.settings?.irSlots);
     for (const key of allowedKeys) {
       if (body.settings && body.settings[key] !== undefined) {
         league.settings[key] = body.settings[key];
       }
     }
-    // Keep positions list in sync with allowed positions
+    console.log('[settings] after merge irSlots:', league.settings?.irSlots);
     if (body.settings?.positionsAllowed) league.positions = body.settings.positionsAllowed;
     await saveLeague(league);
+    console.log('[settings] saved successfully, irSlots:', league.settings?.irSlots);
     return Response.json({ ok: true, settings: league.settings }, { headers: NO_CACHE });
   }
 
