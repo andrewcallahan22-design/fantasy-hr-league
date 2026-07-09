@@ -2078,6 +2078,19 @@ function renderLeagueRulesCard(league, isCommish) {
     { icon: '📊', label: 'Stats source', text: 'Home run totals sync automatically every minute from the official MLB Stats API — no manual entry needed.' },
   ];
 
+  if (s.irSlots > 0) {
+    const replText = s.irReplacementRule === 'same-team'
+      ? 'Replacement must be from <strong>the same MLB team</strong>.'
+      : 'Replacement can be <strong>any available player</strong>.';
+    rules.push({ icon: '🏥', label: 'IR slots', text: `Each manager has <strong>${s.irSlots} IR slot${s.irSlots>1?'s':''}</strong>. If one of your players lands on the MLB IL, you can move them to IR and add a temporary replacement. Their pre-injury HRs still count. ${replText}` });
+  }
+  if (s.waiverType && s.waiverType !== 'none') {
+    const wText = s.waiverType === 'waiver-order'
+      ? 'Claims are processed in <strong>waiver order</strong> (worst record picks first).'
+      : 'Claims are <strong>first-come first-served</strong>.';
+    rules.push({ icon: '🔄', label: 'Waiver wire', text: 'You can drop a player and pick up someone from the undrafted pool during the month. ' + wText });
+  }
+
   return `
     <details style="margin-top:16px" ${!league.months || !Object.keys(league.months).length ? 'open' : ''}>
       <summary style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--panel);border:1px solid var(--panel-border);border-radius:var(--radius-lg);user-select:none">
@@ -2307,44 +2320,108 @@ function monthSortKey(key) {
 
 
 function renderRostersEdit(body) {
-  const { league, isCommish } = CURRENT_LEAGUE;
+  const { league, isCommish, myManager } = CURRENT_LEAGUE;
   const key = league.currentMonth;
   const month = league.months?.[key];
-  if (!month) return;
+  if (!month) { body.innerHTML = '<div class="empty-state"><div class="empty-state-title">No active month</div></div>'; return; }
+
+  const irSlots      = parseInt(league.settings?.irSlots) || 0;
+  const waiverType   = league.settings?.waiverType || 'none';
+  const isAdmin      = SESSION?.isAdmin;
 
   let html = '';
-  if (isCommish || SESSION?.isAdmin) {
-    html += `<p class="page-subtitle">Editing ${escapeHtml(key)} rosters. Changes are logged and override the auto-sync baseline.</p>`;
+
+  // Header info
+  if (isCommish || isAdmin) {
+    html += `<p class="page-subtitle">Commissioner view — edit any roster. IR and waiver moves logged automatically.</p>`;
   } else {
-    html += `
-      <div class="notice info" style="margin-bottom:16px">
-        🔒 Rosters are managed by the commissioner. The sync automatically tracks home runs — no manual editing needed.
-      </div>
-      <p class="page-subtitle">${escapeHtml(key)} rosters — read only</p>
-    `;
+    html += `<p class="page-subtitle">${escapeHtml(key)} rosters`;
+    if (irSlots) html += ` · ${irSlots} IR slot${irSlots>1?'s':''} enabled`;
+    if (waiverType !== 'none') html += ` · Waiver wire: ${waiverType === 'free-agent' ? 'free agent' : 'waiver order'}`;
+    html += `</p>`;
   }
+
   for (const mgr of league.managers) {
-    const editable = canEditMgrRoster(mgr);
+    const editable    = isCommish || isAdmin;
+    const isMyRoster  = mgr === myManager;
+    const roster      = month.rosters[mgr] || [];
+    const irCount     = roster.filter(s => s.irPlayer).length;
+    const canUseIR    = irSlots > 0 && (isMyRoster || editable);
+    const canWaiver   = waiverType !== 'none' && (isMyRoster || editable);
+
     html += `
-      <div class="panel">
-        <div class="panel-header">${escapeHtml(mgr)}${editable ? '' : ' <span class="team-chip">read only</span>'}</div>
+      <div class="panel" style="margin-bottom:14px">
+        <div class="panel-header" style="justify-content:space-between">
+          <span>${escapeHtml(mgr)}${isMyRoster ? ' <span class="team-chip" style="background:rgba(240,199,94,0.15);color:var(--accent)">You</span>' : ''}</span>
+          ${irSlots ? `<span style="font-size:11px;color:var(--text-muted)">IR: ${irCount}/${irSlots} used</span>` : ''}
+        </div>
         <div class="panel-body" style="padding:0">
           <table class="data-table">
-            <thead><tr><th style="width:36%">Player</th><th style="width:14%">Team</th><th style="width:20%">Pos</th><th class="right" style="width:18%">HR</th></tr></thead>
+            <thead><tr>
+              <th>Player</th>
+              <th>Team</th>
+              <th>Pos</th>
+              <th class="right">HR</th>
+              ${irSlots || waiverType !== 'none' ? '<th>Actions</th>' : ''}
+            </tr></thead>
             <tbody>
-              ${(month.rosters[mgr] || []).map((p, i) => `
-                <tr>
-                  <td><input class="slot-input" value="${escapeAttr(p.player || '')}" placeholder="Player name" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'player', this.value)"></td>
-                  <td><input class="slot-input" value="${escapeAttr(p.team || '')}" placeholder="Team" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'team', this.value)"></td>
+              ${roster.map((p, i) => {
+                const hasIRPlayer  = !!p.irPlayer;
+                const playerName   = hasIRPlayer ? p.irPlayer : (p.player || '');
+                const health       = p.irPlayer
+                  ? (league.health?.[normNameFE(p.irPlayer)] || '')
+                  : (league.health?.[normNameFE(p.player)] || '');
+                const isIL         = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
+                const canMoveToIR  = canUseIR && !hasIRPlayer && p.player && isIL && irCount < irSlots;
+                const canReturn    = canUseIR && hasIRPlayer;
+
+                let actionCell = '';
+                if (hasIRPlayer) {
+                  // Slot has IR player + temp replacement
+                  actionCell = `
+                    <div style="display:flex;flex-direction:column;gap:3px">
+                      <span style="font-size:9px;background:rgba(239,68,68,0.15);color:var(--red);padding:1px 5px;border-radius:3px;display:inline-block">IR: ${escapeHtml(p.irPlayer)}</span>
+                      ${canReturn ? `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px" onclick="returnFromIR('${escapeAttr(mgr)}',${i})">↩ Return to lineup</button>` : ''}
+                    </div>`;
+                } else if (canMoveToIR) {
+                  actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;color:var(--orange)" onclick="moveToIR('${escapeAttr(mgr)}',${i})">→ IR</button>`;
+                } else if (canWaiver && p.player) {
+                  actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px" onclick="openWaiverClaim('${escapeAttr(mgr)}',${i})">⇄ Waiver</button>`;
+                } else if (!p.player && canWaiver) {
+                  actionCell = `<button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;color:var(--green)" onclick="openWaiverClaim('${escapeAttr(mgr)}',${i})">+ Pick up</button>`;
+                }
+
+                const hrDisplay = hasIRPlayer
+                  ? `<span title="IR player HRs: ${p.irHr||0} + Replacement HRs: ${p.hr||0}">${(parseInt(p.irHr)||0)+(parseInt(p.hr)||0)} <span style="font-size:9px;color:var(--text-faint)">(${p.irHr||0}+${p.hr||0})</span></span>`
+                  : (editable
+                      ? `<input class="hr-input" type="number" min="0" value="${parseInt(p.hr)||0}" onchange="editSlot('${escapeAttr(mgr)}',${i},'hr',this.value)">`
+                      : `<strong>${parseInt(p.hr)||0}</strong>`);
+
+                return `<tr style="${hasIRPlayer ? 'background:rgba(239,68,68,0.04)' : ''}">
                   <td>
-                    <select class="slot-input" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'position', this.value)">
-                      <option value="">—</option>
-                      ${(league.positions || []).map(pos => `<option value="${escapeAttr(pos)}" ${p.position === pos ? 'selected' : ''}>${escapeHtml(pos)}</option>`).join('')}
-                    </select>
+                    ${editable
+                      ? `<input class="slot-input" value="${escapeAttr(p.player||'')}" placeholder="Player name" onchange="editSlot('${escapeAttr(mgr)}',${i},'player',this.value)">`
+                      : `<span style="font-weight:600">${escapeHtml(p.player||'—')}</span>`}
+                    ${hasIRPlayer ? `<div style="font-size:10px;color:var(--red);margin-top:2px">🏥 IR slot — temp fill</div>` : ''}
+                    ${!hasIRPlayer && isIL ? `<span style="font-size:10px;color:var(--red);margin-left:4px">🏥 IL</span>` : ''}
                   </td>
-                  <td class="right"><input class="hr-input" type="number" min="0" value="${parseInt(p.hr) || 0}" ${editable ? '' : 'disabled'} onchange="editSlot('${escapeAttr(mgr)}', ${i}, 'hr', this.value)"></td>
-                </tr>
-              `).join('')}
+                  <td>
+                    ${editable
+                      ? `<input class="slot-input" value="${escapeAttr(p.team||'')}" placeholder="Team" onchange="editSlot('${escapeAttr(mgr)}',${i},'team',this.value)">`
+                      : `<span>${escapeHtml(p.team||'—')}</span>`}
+                  </td>
+                  <td>
+                    ${editable
+                      ? `<select class="slot-input" onchange="editSlot('${escapeAttr(mgr)}',${i},'position',this.value)">
+                           <option value="">—</option>
+                           ${(league.positions||[]).map(pos=>`<option value="${escapeAttr(pos)}" ${p.position===pos?'selected':''}>${escapeHtml(pos)}</option>`).join('')}
+                         </select>`
+                      : `<span>${escapeHtml(p.position||'—')}</span>`}
+                  </td>
+                  <td class="right">${hrDisplay}</td>
+                  ${irSlots || waiverType !== 'none' ? `<td>${actionCell}</td>` : ''}
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>
@@ -2354,6 +2431,112 @@ function renderRostersEdit(body) {
   body.innerHTML = html;
 }
 
+// Simple client-side normName for health lookups
+function normNameFE(s) {
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim();
+}
+
+async function moveToIR(mgr, slotIndex) {
+  if (!confirm(`Move this player to the IR slot? They'll be held while you add a temporary replacement.`)) return;
+  const r = await fetch(API_LEAGUE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'move-to-ir', leagueId: CURRENT_LEAGUE.league.id, manager: mgr, slotIndex }),
+  });
+  const res = await r.json();
+  if (!res.ok) { alert(res.error); return; }
+  await refreshLeague();
+  renderActiveTab();
+}
+
+async function returnFromIR(mgr, slotIndex) {
+  if (!confirm(`Return the IR player to the active lineup? The temporary replacement will be dropped.`)) return;
+  const r = await fetch(API_LEAGUE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'return-from-ir', leagueId: CURRENT_LEAGUE.league.id, manager: mgr, slotIndex }),
+  });
+  const res = await r.json();
+  if (!res.ok) { alert(res.error); return; }
+  await refreshLeague();
+  renderActiveTab();
+}
+
+function openWaiverClaim(mgr, slotIndex) {
+  const { league } = CURRENT_LEAGUE;
+  const month = league.months?.[league.currentMonth];
+  const slot = month?.rosters?.[mgr]?.[slotIndex];
+  const irRule = league.settings?.irReplacementRule || 'any-available';
+  const sameTeam = slot?.irPlayer && irRule === 'same-team';
+
+  // Build modal
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay open';
+  wrap.innerHTML = `
+    <div class="modal" style="max-width:440px">
+      <div class="modal-head">
+        <div class="modal-title">⇄ Waiver Claim</div>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        ${slot?.player ? `<p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">Dropping: <strong style="color:var(--text)">${escapeHtml(slot.irPlayer || slot.player)}</strong></p>` : ''}
+        ${sameTeam ? `<div class="notice warn" style="margin-bottom:12px">Same-team IR rule: replacement must be from <strong>${escapeHtml(slot.irTeam)}</strong></div>` : ''}
+        <div class="field">
+          <label>Player to pick up</label>
+          <input class="input" id="waiver-player-name" placeholder="Type player name…" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Their MLB team</label>
+          <input class="input" id="waiver-player-team" placeholder="e.g. LAD" maxlength="10" style="max-width:100px"
+            ${sameTeam ? `value="${escapeAttr(slot.irTeam)}" readonly` : ''}>
+        </div>
+        <div class="field">
+          <label>Position</label>
+          <select class="select" id="waiver-player-pos">
+            <option value="">—</option>
+            ${(league.positions||[]).map(p=>`<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="error" id="waiver-err" style="margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="submitWaiverClaim('${escapeAttr(mgr)}',${slotIndex})">Confirm claim</button>
+          <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  setTimeout(() => document.getElementById('waiver-player-name')?.focus(), 100);
+}
+
+async function submitWaiverClaim(mgr, slotIndex) {
+  const pickupPlayer = document.getElementById('waiver-player-name')?.value.trim();
+  const pickupTeam   = document.getElementById('waiver-player-team')?.value.trim().toUpperCase();
+  const pickupPos    = document.getElementById('waiver-player-pos')?.value;
+  const err          = document.getElementById('waiver-err');
+
+  if (!pickupPlayer) { err.textContent = 'Enter a player name'; return; }
+  if (!pickupTeam)   { err.textContent = 'Enter their MLB team abbreviation'; return; }
+
+  const r = await fetch(API_LEAGUE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      action: 'waiver-claim',
+      leagueId: CURRENT_LEAGUE.league.id,
+      manager: mgr,
+      slotIndex,
+      pickupPlayer,
+      pickupTeam,
+      pickupPos,
+    }),
+  });
+  const res = await r.json();
+  if (!res.ok) { err.textContent = res.error || 'Failed'; return; }
+  document.querySelector('.modal-overlay')?.remove();
+  await refreshLeague();
+  renderActiveTab();
+}
 async function editSlot(manager, slotIndex, field, value) {
   setSyncUI('loading', 'Saving…');
   try {
@@ -4296,6 +4479,37 @@ function renderSettings(body) {
             </div>
           </div>
           <div class="error" id="settings-err"></div>
+          <div class="settings-row">
+            <div class="field">
+              <label>IR slots per manager</label>
+              <select class="select" id="set-irSlots">
+                <option value="0" ${!s.irSlots ? 'selected' : ''}>No IR slots (disabled)</option>
+                <option value="1" ${s.irSlots==1 ? 'selected' : ''}>1 IR slot</option>
+                <option value="2" ${s.irSlots==2 ? 'selected' : ''}>2 IR slots</option>
+                <option value="3" ${s.irSlots==3 ? 'selected' : ''}>3 IR slots</option>
+              </select>
+              <div class="input-help">Injured Reserve — lets managers hold a hurt player while adding a temporary replacement. Player must be on the MLB IL to move to IR.</div>
+            </div>
+            <div class="field">
+              <label>IR replacement rule</label>
+              <select class="select" id="set-irReplacementRule">
+                <option value="any-available" ${(s.irReplacementRule||'any-available')==='any-available' ? 'selected' : ''}>Any available player</option>
+                <option value="same-team" ${s.irReplacementRule==='same-team' ? 'selected' : ''}>Must be from same MLB team as IR player</option>
+              </select>
+              <div class="input-help">Controls which players can fill in for an IR slot. "Same team" is stricter but keeps it interesting.</div>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="field">
+              <label>Waiver wire</label>
+              <select class="select" id="set-waiverType">
+                <option value="none" ${!s.waiverType||s.waiverType==='none' ? 'selected' : ''}>No waiver wire</option>
+                <option value="free-agent" ${s.waiverType==='free-agent' ? 'selected' : ''}>Free agent (first-come first-served)</option>
+                <option value="waiver-order" ${s.waiverType==='waiver-order' ? 'selected' : ''}>Waiver order (worst record picks first)</option>
+              </select>
+              <div class="input-help">Allows managers to drop a player and pick up someone from the undrafted pool during the month.</div>
+            </div>
+          </div>
           <button class="btn btn-primary" id="settings-save-btn" onclick="saveSettings()" disabled style="opacity:0.45">Save rules</button>
           <div class="input-help" style="margin-top:8px">Make changes above to enable saving.</div>
         </div>
@@ -4454,7 +4668,7 @@ function initSettingsDirtyTracking() {
   if (!btn) return;
 
   // Capture initial snapshot of all settings values
-  const ids = ['set-rosterSize','set-redraftCadence','set-positionRule','set-teamRule','set-multiPlayerPerTeam','set-scoringCategories'];
+  const ids = ['set-rosterSize','set-redraftCadence','set-positionRule','set-teamRule','set-multiPlayerPerTeam','set-scoringCategories','set-irSlots','set-irReplacementRule','set-waiverType'];
   const snapshot = {};
   for (const id of ids) {
     const el = document.getElementById(id);
