@@ -611,6 +611,7 @@ const API_SYNC   = '/.netlify/functions/run-sync';
 const API_DRAFT  = '/.netlify/functions/draft';
 const API_PUSH   = '/.netlify/functions/push';
 const API_PLAYER = '/.netlify/functions/player';
+const API_ADMIN  = '/.netlify/functions/admin';
 
 let SESSION = null;
 try { SESSION = JSON.parse(localStorage.getItem('fhr_v7_session')) || null; } catch(e){}
@@ -665,7 +666,7 @@ function renderAccountChip() {
   if (!chip || !btn) return;
   if (SESSION) {
     chip.innerHTML = escapeHtml(SESSION.displayName || SESSION.email) +
-      (SESSION.isAdmin ? ' <span class="admin-badge">ADMIN</span>' : '');
+      (SESSION.isAdmin ? ' <span class="admin-badge" style="cursor:pointer" onclick="navigate(\'/admin\')" title="Admin dashboard">⚙ ADMIN</span>' : '');
     btn.textContent = 'Sign out';
   } else {
     chip.textContent = '';
@@ -893,6 +894,10 @@ async function renderRoute() {
   if (path === '/' || path === '') {
     return SESSION ? renderMyLeagues() : renderHomepage();
   }
+  if (path === '/admin') {
+    if (!SESSION?.isAdmin) { navigate('/'); return; }
+    return renderAdminDashboard();
+  }
   if (path === '/new') {
     if (!SESSION) { openAuth('signup', '/new'); return renderHomepage(); }
     return renderNewLeague();
@@ -902,6 +907,121 @@ async function renderRoute() {
   const leagueMatch = path.match(/^\/league\/([^/]+)(?:\/(draft|history|settings|edit|standings|my-settings))?\/?$/);
   if (leagueMatch) return renderLeague(leagueMatch[1], leagueMatch[2] || 'scoreboard');
   return render404();
+}
+
+// ── ADMIN DASHBOARD ──
+// Only accessible when SESSION.isAdmin. Shows all leagues across the platform.
+async function renderAdminDashboard() {
+  const v = document.getElementById('view');
+  v.innerHTML = `
+    <div class="container" style="max-width:900px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+        <div>
+          <h1 class="page-title" style="margin-bottom:4px">⚙ Admin Dashboard</h1>
+          <p class="page-subtitle">All leagues on Go Yard — visible to you only.</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="navigate('/')">← Back</button>
+      </div>
+      <div id="admin-content"><p class="page-subtitle">Loading…</p></div>
+    </div>
+  `;
+
+  try {
+    const r = await fetch(`${API_ADMIN}?action=leagues`, { headers: authHeaders(), cache: 'no-store' });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error);
+
+    const el = document.getElementById('admin-content');
+    if (!data.leagues.length) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-title">No leagues yet</div></div>';
+      return;
+    }
+
+    const totalManagers = data.leagues.reduce((s, l) => s + l.memberCount, 0);
+    const totalHR = data.leagues.reduce((s, l) => s + l.totalHRThisMonth, 0);
+
+    el.innerHTML = `
+      <!-- Summary stats -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">
+        ${[
+          { label: 'Total Leagues', value: data.total },
+          { label: 'Total Managers', value: totalManagers },
+          { label: 'HRs This Month', value: totalHR },
+          { label: 'Active Drafts', value: data.leagues.filter(l => l.draftStatus === 'active').length },
+        ].map(s => `
+          <div class="panel" style="margin:0;text-align:center;padding:16px">
+            <div style="font-family:'Roboto Mono',monospace;font-size:28px;font-weight:700;color:var(--accent)">${s.value}</div>
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px">${s.label}</div>
+          </div>
+        `).join('')}
+      </div>
+
+      <!-- League list -->
+      ${data.leagues.map(lg => `
+        <div class="panel" style="margin-bottom:12px">
+          <div class="panel-header" style="justify-content:space-between">
+            <div>
+              <span style="font-size:15px;font-weight:700">${escapeHtml(lg.name)}</span>
+              <span style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);margin-left:8px">${escapeHtml(lg.id)}</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              ${lg.draftStatus === 'active' ? '<span style="font-size:10px;font-weight:600;color:var(--accent);background:rgba(240,199,94,0.15);padding:2px 7px;border-radius:4px">DRAFT LIVE</span>' : ''}
+              ${lg.pendingCount > 0 ? `<span style="font-size:10px;font-weight:600;color:var(--orange);background:rgba(251,146,60,0.15);padding:2px 7px;border-radius:4px">${lg.pendingCount} PENDING</span>` : ''}
+            </div>
+          </div>
+          <div class="panel-body">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:12px">
+              <div>
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-bottom:2px">Commissioner</div>
+                <div style="font-size:13px">${escapeHtml(lg.commissioner)}</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-bottom:2px">Current Month</div>
+                <div style="font-size:13px">${escapeHtml(lg.currentMonth || 'None')} · ${lg.totalHRThisMonth} HR</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-bottom:2px">History</div>
+                <div style="font-size:13px">${lg.monthCount} month${lg.monthCount !== 1 ? 's' : ''}</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-bottom:2px">Last Sync</div>
+                <div style="font-size:13px;font-family:'Roboto Mono',monospace">${lg.lastSync ? new Date(lg.lastSync).toLocaleTimeString() : '—'}</div>
+              </div>
+            </div>
+
+            <!-- Members table -->
+            <table class="data-table" style="font-size:12px">
+              <thead><tr>
+                <th>Team</th>
+                <th>Real Name</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Joined</th>
+              </tr></thead>
+              <tbody>
+                ${lg.members.map(m => `
+                  <tr>
+                    <td style="font-weight:600">${escapeHtml(m.manager)}</td>
+                    <td style="color:var(--text-muted)">${escapeHtml(m.realName || '—')}</td>
+                    <td style="font-family:'Roboto Mono',monospace;font-size:11px;color:var(--text-muted)">${escapeHtml(m.email || '—')}</td>
+                    <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:${m.status === 'active' ? 'rgba(58,160,92,0.15)' : 'rgba(148,163,184,0.15)'};color:${m.status === 'active' ? 'var(--green)' : 'var(--text-muted)'}">${m.status}</span></td>
+                    <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : '—'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+
+            <div style="margin-top:10px;display:flex;gap:8px">
+              <button class="btn btn-sm btn-ghost" onclick="navigate('/league/${escapeAttr(lg.id)}')">View league →</button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  } catch (e) {
+    document.getElementById('admin-content').innerHTML =
+      `<div class="notice err">Failed to load: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 function renderHomepage() {
@@ -3759,7 +3879,10 @@ function renderSettings(body) {
   if (isCommish) {
     html += `
       <div class="panel">
-        <div class="panel-header">Invite link</div>
+        <div class="panel-header" style="justify-content:space-between">
+          <span>Invite link</span>
+          <button class="btn btn-sm btn-ghost" onclick="refreshLeague()" title="Reload from server">↺ Refresh</button>
+        </div>
         <div class="panel-body">
           <p class="input-help">Anyone with this link can request to join. You approve each request below.</p>
           <div class="invite-box">
@@ -3778,27 +3901,38 @@ function renderSettings(body) {
         </div>
       </div>
     `;
-    if (pending.length) {
-      html += `
-        <div class="panel">
-          <div class="panel-header">Pending requests <span style="color:var(--accent)">${pending.length}</span></div>
-          <div class="panel-body">
-            ${pending.map(p => `
-              <div class="pending-row">
-                <div class="pending-info">
-                  <div class="pending-name">${escapeHtml(p.manager)}</div>
-                  <div class="pending-email">${escapeHtml(p.email || '')}</div>
-                </div>
-                <div class="pending-actions">
-                  <button class="btn btn-sm btn-primary" onclick="approveMember('${escapeAttr(p.email)}')">Approve</button>
-                  <button class="btn btn-sm btn-danger" onclick="declineMember('${escapeAttr(p.email)}')">Decline</button>
-                </div>
-              </div>
-            `).join('')}
-          </div>
+    // Always show the pending panel — even when empty, so the commissioner
+    // can see the count and use the refresh button if someone says they joined
+    // but aren't appearing yet.
+    html += `
+      <div class="panel">
+        <div class="panel-header">
+          Pending requests
+          <span style="color:var(--accent);margin-left:6px">${pending.length}</span>
         </div>
-      `;
-    }
+        <div class="panel-body">
+          ${pending.length === 0 ? `
+            <div style="color:var(--text-muted);font-size:13px;padding:4px 0">
+              No pending requests right now.
+              <span style="color:var(--text-faint);font-size:11px;display:block;margin-top:4px">
+                If someone says they joined but isn't showing here, tap ↺ Refresh above.
+              </span>
+            </div>
+          ` : pending.map(p => `
+            <div class="pending-row">
+              <div class="pending-info">
+                <div class="pending-name">${escapeHtml(p.manager)}${p.realName ? ` <span style="font-weight:400;color:var(--text-muted)">(${escapeHtml(p.realName)})</span>` : ''}</div>
+                <div class="pending-email">${escapeHtml(p.email || '— no email linked')}</div>
+              </div>
+              <div class="pending-actions">
+                <button class="btn btn-sm btn-primary" onclick="approveMember('${escapeAttr(p.email)}')">Approve</button>
+                <button class="btn btn-sm btn-danger" onclick="declineMember('${escapeAttr(p.email)}')">Decline</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
     html += `
       <div class="panel">
         <div class="panel-header">League rules</div>
@@ -3929,6 +4063,24 @@ function renderSettings(body) {
   renderNotificationsPanelInto('notif-panel');
   // Wire up dirty tracking so save button enables only when something changes
   requestAnimationFrame(() => initSettingsDirtyTracking());
+
+  // Silently refresh league data in the background so the commissioner always
+  // sees up-to-date pending requests without having to manually refresh.
+  // Uses a non-rendering fetch so it doesn't wipe unsaved form changes.
+  if (CURRENT_LEAGUE?.isCommish) {
+    fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), {
+      headers: authHeaders(), cache: 'no-store'
+    }).then(r => r.json()).then(res => {
+      if (!res.ok) return;
+      // Only update if pending count changed — avoids re-render on every tab open
+      const newPending = (res.league?.members || []).filter(m => m.status === 'pending').length;
+      const oldPending = (CURRENT_LEAGUE.league?.members || []).filter(m => m.status === 'pending').length;
+      if (newPending !== oldPending) {
+        CURRENT_LEAGUE = res;
+        renderActiveTab();
+      }
+    }).catch(() => {});
+  }
 }
 
 async function openLinkMember(manager) {
