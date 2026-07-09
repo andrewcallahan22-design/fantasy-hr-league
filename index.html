@@ -886,8 +886,14 @@ async function submitResetPassword(token) {
 async function navigate(path, replace = false) {
   if (replace) history.replaceState({}, '', path);
   else history.pushState({}, '', path);
+  // Stop the league poller if navigating away from league pages —
+  // prevents background fetches from re-rendering the league shell
+  // over whatever page the user just navigated to.
+  if (!path.startsWith('/league/')) {
+    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+    if (_draftPollTimer) { clearInterval(_draftPollTimer); _draftPollTimer = null; }
+  }
   await renderRoute();
-
 }
 window.addEventListener('popstate', renderRoute);
 
@@ -927,30 +933,70 @@ async function renderRoute() {
 // Only accessible when SESSION.isAdmin. Shows all leagues across the platform.
 // ── ADMIN ACTIONS ──
 async function adminCheckPush(leagueId, leagueName) {
+  // Show result inline in the page instead of alert() which gets blocked in PWA
+  const containerId = `push-diag-${leagueId.replace(/[^a-z0-9]/gi, '')}`;
+  const existing = document.getElementById(containerId);
+  if (existing) { existing.remove(); return; } // toggle off if already showing
+
+  // Find the button that was clicked and insert panel after its parent
+  const btn = document.querySelector(`[onclick*="adminCheckPush('${leagueId}'"]`);
+  const insertAfter = btn?.closest('.panel');
+  if (!insertAfter) return;
+
+  const panel = document.createElement('div');
+  panel.id = containerId;
+  panel.className = 'panel';
+  panel.style.cssText = 'margin-top:8px;border-color:rgba(96,165,250,0.3)';
+  panel.innerHTML = `<div class="panel-header" style="color:#60a5fa">🔔 Notification status — ${escapeHtml(leagueName)}</div><div class="panel-body"><p class="input-help">Loading…</p></div>`;
+  insertAfter.insertAdjacentElement('afterend', panel);
+
   try {
     const r = await fetch(`/.netlify/functions/diag?leagueId=${encodeURIComponent(leagueId)}&push=1`, {
       headers: authHeaders(), cache: 'no-store'
     });
     const res = await r.json();
-    if (!res.ok) { alert(res.error || 'Failed'); return; }
+    if (!res.ok) { panel.querySelector('.panel-body').innerHTML = `<div class="notice err">${escapeHtml(res.error)}</div>`; return; }
 
-    const lines = [
-      `Push diagnostics for "${leagueName}"`,
-      `VAPID keys configured: ${res.vapidConfigured ? '✅ Yes' : '❌ NO — notifications will not work!'}`,
-      '',
-      `${res.summary.subscribed}/${res.summary.totalActive} managers subscribed`,
-      `${res.summary.notifyAllEnabled} have "notify all" enabled`,
-      res.summary.notLinked > 0 ? `⚠ ${res.summary.notLinked} member(s) have no email linked` : '',
-      '',
-      '--- Per manager ---',
-      ...res.memberStatus.map(m =>
-        `${m.manager} (${m.email})\n  Subscribed: ${m.subscribed ? `✅ ${m.deviceCount} device(s)` : '❌ No'} | Notify rivals: ${m.notifyAll ? '✅' : '❌'}`
-      ),
-    ].filter(l => l !== '');
+    const vapidOk = res.vapidConfigured;
+    panel.querySelector('.panel-body').innerHTML = `
+      <div style="margin-bottom:14px">
+        <div style="font-size:13px;font-weight:600;color:${vapidOk ? 'var(--green)' : 'var(--red)'};margin-bottom:4px">
+          ${vapidOk ? '✅ VAPID keys configured — push is enabled' : '❌ VAPID keys NOT configured — notifications will not work'}
+        </div>
+        ${!vapidOk ? `<div class="input-help">Go to Netlify → Site configuration → Environment variables and add VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.</div>` : ''}
+      </div>
 
-    alert(lines.join('\n'));
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">
+        ${res.summary.subscribed}/${res.summary.totalActive} subscribed ·
+        ${res.summary.notifyAllEnabled} notify-all enabled ·
+        ${res.summary.notLinked > 0 ? `<span style="color:var(--orange)">${res.summary.notLinked} not linked</span>` : 'all linked'}
+      </div>
+
+      <table class="data-table" style="font-size:12px">
+        <thead><tr>
+          <th>Manager</th><th>Email</th>
+          <th>Subscribed</th><th>Devices</th><th>Notify rivals</th>
+        </tr></thead>
+        <tbody>
+          ${res.memberStatus.map(m => `
+            <tr>
+              <td style="font-weight:600">${escapeHtml(m.manager)}</td>
+              <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-muted)">${escapeHtml(m.email)}</td>
+              <td style="color:${m.subscribed ? 'var(--green)' : 'var(--red)'}">${m.subscribed ? '✅' : '❌ No'}</td>
+              <td style="font-family:'Roboto Mono',monospace">${m.deviceCount || '—'}</td>
+              <td style="color:${m.notifyAll ? 'var(--green)' : 'var(--text-faint)'}">${m.notifyAll ? '✅' : '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+
+      <div style="margin-top:12px;font-size:11px;color:var(--text-faint)">
+        <strong>How to fix missing subscriptions:</strong> Each manager needs to open ⚙ Settings → enable notifications on their device.
+        On iPhone, they must first add Go Yard to their Home Screen.
+      </div>
+    `;
   } catch (e) {
-    alert('Failed: ' + e.message);
+    panel.querySelector('.panel-body').innerHTML = `<div class="notice err">Failed: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -963,10 +1009,10 @@ async function adminApprovePending(leagueId) {
       body: JSON.stringify({ action: 'approve-all-pending', leagueId }),
     });
     const res = await r.json();
-    if (!res.ok) { alert(res.error || 'Failed'); return; }
-    alert(`✓ Approved ${res.approved} member(s)`);
+    if (!res.ok) { showAdminToast(res.error || 'Failed', 'err'); return; }
+    showAdminToast(`✓ Approved ${res.approved} member(s)`, 'success');
     renderAdminDashboard();
-  } catch (e) { alert('Connection failed'); }
+  } catch (e) { showAdminToast('Connection failed', 'err'); }
 }
 
 async function adminForceAddMember(leagueId, leagueName) {
@@ -981,10 +1027,25 @@ async function adminForceAddMember(leagueId, leagueName) {
       body: JSON.stringify({ action: 'force-add-member', leagueId, email: email.trim(), manager: manager.trim() }),
     });
     const res = await r.json();
-    if (!res.ok) { alert(res.error || 'Failed'); return; }
-    alert(`✓ Added ${manager} (${email}) as active member`);
+    if (!res.ok) { showAdminToast(res.error || 'Failed', 'err'); return; }
+    showAdminToast(`✓ Added ${manager} (${email}) as active member`, 'success');
     renderAdminDashboard();
-  } catch (e) { alert('Connection failed'); }
+  } catch (e) { showAdminToast('Connection failed', 'err'); }
+}
+
+function showAdminToast(msg, type = 'success') {
+  document.getElementById('admin-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.id = 'admin-toast';
+  toast.style.cssText = `
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:${type === 'err' ? 'rgba(239,68,68,0.95)' : 'rgba(58,160,92,0.95)'};
+    color:white;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;
+    z-index:500;box-shadow:0 4px 16px rgba(0,0,0,0.4);
+  `;
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3500);
 }
 
 async function renderAdminDashboard() {
@@ -1493,20 +1554,9 @@ function startLeaguePolling() {
   if (_pollTimer) clearInterval(_pollTimer);
   _pollTimer = setInterval(async () => {
     if (!CURRENT_LEAGUE || document.hidden) return;
-    // Settings/Commissioner tabs contain dropdowns and form fields the user
-    // may be actively editing. A background poll mid-edit was silently
-    // overwriting unsaved selections (selects aren't caught by the input-type
-    // check below since their el.type is 'select-one', not 'text'/'number').
-    // Settings data isn't time-sensitive like scores/draft picks, so it's
-    // safe to simply not poll while the user is on either settings tab.
-    //
-    // Draft tab is ALSO excluded here — it has its own dedicated 8-second
-    // poller (startDraftPolling) that preserves scroll position and skips
-    // re-rendering while the user is searching. Without this exclusion, BOTH
-    // pollers were firing on overlapping schedules (15s + 8s), which is what
-    // caused the page to visibly jump back to the top roughly every ~10s.
+    // Only poll on actual league pages — never on My Leagues, admin, join, etc.
+    if (!location.pathname.startsWith('/league/')) return;
     if (CURRENT_TAB === 'settings' || CURRENT_TAB === 'my-settings' || CURRENT_TAB === 'draft') return;
-    // Also skip if we're on the admin page — it's a separate route, not a league tab
     if (location.pathname === '/admin') return;
     const el = document.activeElement;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) return;
@@ -1522,7 +1572,8 @@ function startLeaguePolling() {
     window._visibilityListenerAttached = true;
     document.addEventListener('visibilitychange', async () => {
       if (document.hidden || !CURRENT_LEAGUE) return;
-      // Small delay to let iOS finish waking before firing network request
+      // Only re-fetch when actually on a league page
+      if (!location.pathname.startsWith('/league/')) return;
       setTimeout(() => _fetchAndRenderLeague(), 300);
     });
   }
@@ -1530,6 +1581,9 @@ function startLeaguePolling() {
 
 async function _fetchAndRenderLeague() {
   if (!CURRENT_LEAGUE) return;
+  // Only run when we're actually on a league page — never hijack My Leagues,
+  // the admin dashboard, the join flow, or any other non-league route.
+  if (!location.pathname.startsWith('/league/')) return;
   try {
     const r = await fetch(API_LEAGUE + '?id=' + encodeURIComponent(CURRENT_LEAGUE.league.id), { headers: authHeaders(), cache: 'no-store' });
     const res = await r.json();
@@ -1560,6 +1614,12 @@ function restoreDetailsState(state) {
 }
 
 function renderLeagueShell() {
+  // Guard: never render the league shell outside of a league route.
+  // This prevents the poller or visibilitychange from hijacking My Leagues,
+  // the admin page, join flow, or any other non-league page.
+  if (!location.pathname.startsWith('/league/')) return;
+  if (!CURRENT_LEAGUE) return;
+
   // Save <details> open/closed state before wiping the DOM so sections
   // like "How this league works" don't collapse on every background poll.
   const detailsState = saveDetailsState();
