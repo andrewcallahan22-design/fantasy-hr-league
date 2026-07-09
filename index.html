@@ -17,7 +17,9 @@
 <meta name="apple-mobile-web-app-title" content="Go Yard">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="icon" type="image/svg+xml" href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="3" fill="%232d7a44"/><path d="M 20 33 L 5 17 Q 20 0 35 17 L 20 33 Z" fill="%23bd7a3e"/><path d="M 20 30 L 12 21 L 20 12 L 28 21 Z" fill="%233aa05c"/><rect x="18.5" y="31.5" width="3" height="3" fill="%23f4f1e6"/><rect x="26.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/><rect x="18.5" y="10.5" width="3" height="3" fill="%23f4f1e6"/><rect x="10.5" y="19.5" width="3" height="3" fill="%23f4f1e6"/></svg>'>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Oswald:wght@500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2043,10 +2045,10 @@ function renderLeagueRulesCard(league, isCommish) {
 
   // Plain-English translations
   const posRuleText = posRule === 'all-unique'
-    ? `each position can only appear <strong>once</strong> on your roster`
+    ? `each position can only appear <strong>once</strong> on your roster — no two players at the same position`
     : posRule === 'unrestricted'
-      ? `you can pick <strong>any combination</strong> of positions`
-      : `you can have <strong>up to 2 players at the same position</strong>`;
+      ? `you can pick <strong>any combination</strong> of positions with no restrictions`
+      : `you can have <strong>one duplicate position only</strong> — for example, two catchers is fine, but the rest of your roster must be unique positions. You cannot have two duplicates.`;
 
   const teamRuleText = teamRule === 'all-unique'
     ? `Each MLB team can only be represented <strong>once across the entire league</strong> — if someone picks a Yankee, no other manager can pick any Yankee`
@@ -2067,8 +2069,8 @@ function renderLeagueRulesCard(league, isCommish) {
   const rules = [
     { icon: '⚾', label: 'How you score', text: 'Home runs only. Every HR hit by a player on your roster earns your team 1 point. Nothing else counts.' },
     { icon: '👥', label: 'Roster size', text: `Each manager drafts <strong>${rosterSize} players</strong>.` },
-    { icon: '🏟️', label: 'Eligible positions', text: `You can draft players at these positions: <strong>${escapeHtml(positionsText)}</strong>.` },
-    { icon: '📐', label: 'Position rule', text: `When building your roster, ${posRuleText}.` },
+    { icon: '🎯', label: 'Eligible positions', text: `You can draft players at these positions: <strong>${escapeHtml(positionsText)}</strong>.` },
+    { icon: '📋', label: 'Position rule', text: `When building your roster, ${posRuleText}.` },
     { icon: '🧢', label: 'Team rule', text: `${teamRuleText}.` },
     { icon: '📅', label: 'Draft schedule', text: `Rosters ${cadenceText === 'monthly' ? 're-draft at the start of each month' : cadenceText}. The manager with the most HRs wins each month.` },
     { icon: '📊', label: 'Stats source', text: 'Home run totals sync automatically every minute from the official MLB Stats API — no manual entry needed.' },
