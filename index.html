@@ -665,11 +665,25 @@ function renderAccountChip() {
   const btn = document.getElementById('account-btn');
   if (!chip || !btn) return;
   if (SESSION) {
-    chip.innerHTML = escapeHtml(SESSION.displayName || SESSION.email) +
-      (SESSION.isAdmin ? ' <span class="admin-badge" style="cursor:pointer" onclick="navigate(\'/admin\')" title="Admin dashboard">⚙ ADMIN</span>' : '');
+    chip.innerHTML = escapeHtml(SESSION.displayName || SESSION.email);
+    if (SESSION.isAdmin) {
+      // Add admin button as a sibling, not nested inside the chip text
+      let adminBtn = document.getElementById('admin-nav-btn');
+      if (!adminBtn) {
+        adminBtn = document.createElement('button');
+        adminBtn.id = 'admin-nav-btn';
+        adminBtn.className = 'admin-badge';
+        adminBtn.style.cssText = 'cursor:pointer;border:none;margin-left:6px;vertical-align:middle';
+        adminBtn.title = 'Admin dashboard';
+        adminBtn.textContent = '⚙ ADMIN';
+        adminBtn.onclick = () => navigate('/admin');
+        chip.parentNode.insertBefore(adminBtn, chip.nextSibling);
+      }
+    }
     btn.textContent = 'Sign out';
   } else {
     chip.textContent = '';
+    document.getElementById('admin-nav-btn')?.remove();
     btn.textContent = 'Sign in';
   }
 }
@@ -911,6 +925,40 @@ async function renderRoute() {
 
 // ── ADMIN DASHBOARD ──
 // Only accessible when SESSION.isAdmin. Shows all leagues across the platform.
+// ── ADMIN ACTIONS ──
+async function adminApprovePending(leagueId) {
+  if (!confirm('Approve ALL pending members in this league?')) return;
+  try {
+    const r = await fetch(API_ADMIN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'approve-all-pending', leagueId }),
+    });
+    const res = await r.json();
+    if (!res.ok) { alert(res.error || 'Failed'); return; }
+    alert(`✓ Approved ${res.approved} member(s)`);
+    renderAdminDashboard();
+  } catch (e) { alert('Connection failed'); }
+}
+
+async function adminForceAddMember(leagueId, leagueName) {
+  const email = prompt(`Force-add a member to "${leagueName}".\n\nEnter their email address:`);
+  if (!email?.trim()) return;
+  const manager = prompt(`What should their team name be?`);
+  if (!manager?.trim()) return;
+  try {
+    const r = await fetch(API_ADMIN, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'force-add-member', leagueId, email: email.trim(), manager: manager.trim() }),
+    });
+    const res = await r.json();
+    if (!res.ok) { alert(res.error || 'Failed'); return; }
+    alert(`✓ Added ${manager} (${email}) as active member`);
+    renderAdminDashboard();
+  } catch (e) { alert('Connection failed'); }
+}
+
 async function renderAdminDashboard() {
   const v = document.getElementById('view');
   v.innerHTML = `
@@ -1011,8 +1059,10 @@ async function renderAdminDashboard() {
               </tbody>
             </table>
 
-            <div style="margin-top:10px;display:flex;gap:8px">
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn btn-sm btn-ghost" onclick="navigate('/league/${escapeAttr(lg.id)}')">View league →</button>
+              ${lg.pendingCount > 0 ? `<button class="btn btn-sm btn-primary" onclick="adminApprovePending('${escapeAttr(lg.id)}')">Approve all pending</button>` : ''}
+              <button class="btn btn-sm btn-ghost" onclick="adminForceAddMember('${escapeAttr(lg.id)}', '${escapeAttr(lg.name)}')">+ Force add member</button>
             </div>
           </div>
         </div>
