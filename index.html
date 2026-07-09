@@ -4941,7 +4941,16 @@ async function saveSettings() {
 
   const res = await leagueAction('settings', { settings });
   if (res?.ok) {
-    // Update in memory immediately — no flash, no double-render
+    // Verify the server actually saved what we sent — catches stale deployment issues
+    const savedIrSlots = res.settings?.irSlots;
+    const sentIrSlots = settings.irSlots;
+    if (sentIrSlots > 0 && savedIrSlots != sentIrSlots) {
+      err.textContent = `⚠ Server did not save IR slots (got ${savedIrSlots}, sent ${sentIrSlots}). The backend may need redeploying.`;
+      err.style.color = 'var(--orange)';
+      return;
+    }
+
+    // Update in memory immediately
     CURRENT_LEAGUE.league.settings = { ...CURRENT_LEAGUE.league.settings, ...settings };
     // Stamp a saved timestamp so the onboarding checklist detects completion
     CURRENT_LEAGUE.league.settingsSavedAt = Date.now();
