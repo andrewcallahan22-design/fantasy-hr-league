@@ -1,7 +1,7 @@
 // Service worker for push notifications.
 // VERSION is updated on every deploy so iOS detects changes and refetches.
 // Format: YYYY-MM-DD-HHmm (UTC build time approximation)
-const SW_VERSION = '2026-06-29-go-yard';
+const SW_VERSION = '2026-07-09-go-yard';
 
 self.addEventListener('push', (event) => {
   let data = { title: '⚾ Home Run!', body: '', url: '/' };
@@ -10,9 +10,9 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(self.registration.showNotification(data.title, {
     body: data.body,
-    icon: '/favicon-192.png',
-    badge: '/favicon-96.png',
-    tag: data.tag || 'fantasy-hr',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: data.tag || 'go-yard',
     data: { url: data.url || '/' },
     vibrate: [80, 40, 80],
   }));

@@ -963,8 +963,19 @@ async function renderMyLeagues() {
     </div>
   `;
   try {
-    const r = await fetch(API_LEAGUE, { headers: authHeaders(), cache: 'no-store' });
-    const data = await r.json();
+    // Fetch with automatic retry — on PWA first open, the service worker can
+    // sometimes intercept the request and return a stale/empty response before
+    // the network responds. A single retry after 800ms fixes this reliably.
+    let data, r;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise(res => setTimeout(res, 800));
+      r = await fetch(API_LEAGUE, { headers: authHeaders(), cache: 'no-store' });
+      data = await r.json();
+      // If we got leagues, stop retrying
+      if (data.leagues?.length) break;
+      // If auth error, stop immediately
+      if (r.status === 401 || data.error) break;
+    }
 
     // If server says we're not authenticated, clear stale session and show sign-in
     if (r.status === 401 || data.error === 'Not signed in' || data.error === 'Invalid token') {
