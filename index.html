@@ -1756,7 +1756,7 @@ function renderScoreboard(body) {
                   : `<span style="color:var(--text-faint);font-size:11px">—</span>`;
                 return `<tr>
                   <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0">
-                    <button onclick="openPlayerProfile('${escapeAttr(p.player)}', null)" title="Tap for player profile" class="player-link" style="text-align:left;width:100%">
+                    <button data-player="${escapeAttr(p.player)}" onclick="openPlayerProfile(this.dataset.player, null)" title="Tap for stats &amp; health" class="player-link" style="text-align:left;width:100%">
                       <strong style="font-size:13px">${escapeHtml(p.player)}</strong>${badge}${healthBadge}
                     </button>
                     ${seasonLine}
@@ -1995,7 +1995,7 @@ function renderStandings(body) {
                   ${roster.map(p => p.player ? `
                     <tr>
                       <td>
-                        <button onclick="openPlayerProfile('${escapeAttr(p.player)}', null)" style="background:none;border:none;padding:0;cursor:pointer;color:var(--accent);font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(240,199,94,0.4)">${escapeHtml(p.player)}</button>
+                        <button data-player="${escapeAttr(p.player)}" onclick="openPlayerProfile(this.dataset.player, null)" style="background:none;border:none;padding:0;cursor:pointer;color:var(--accent);font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(240,199,94,0.4)">${escapeHtml(p.player)}</button>
                       </td>
                       <td><span class="team-chip" style="font-size:10px">${escapeHtml(p.team || '—')}</span></td>
                       <td><span class="pos-chip" style="font-size:10px">${escapeHtml(p.position || p.pos || '—')}</span></td>
@@ -2608,7 +2608,7 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
     return `<tr style="${rowStyle}">
       <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${p.rank || i + 1}</td>
       <td style="font-weight:600;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        <button onclick="openPlayerProfile('${escapeAttr(p.name)}', ${p.id || null})" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</button>
+        <button data-player="${escapeAttr(p.name)}" data-mlbid="${p.id || ''}" onclick="openPlayerProfile(this.dataset.player, this.dataset.mlbid||null)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</button>
       </td>
       <td><span class="team-chip" style="font-size:9px;${isTeamTaken ? 'text-decoration:line-through;opacity:0.5' : ''}">${escapeHtml(p.team)}</span></td>
       <td><span class="pos-chip" style="font-size:9px;${posBlocked ? 'background:rgba(239,68,68,0.15);color:var(--red)' : ''}">${escapeHtml(p.pos)}</span></td>
@@ -3342,9 +3342,17 @@ function renderMySettings(body) {
 
           ${myManager ? `
           <div class="field">
-            <label>Manager name in this league</label>
-            <div style="font-size:14px;color:var(--text-dim);padding:4px 0">${escapeHtml(myManager)} <span class="team-chip" style="margin-left:4px">${escapeHtml(league.name)}</span></div>
-            <div class="input-help">Manager names are set per league. Ask the commissioner to update it if needed.</div>
+            <label>Team name in ${escapeHtml(league.name)}</label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input class="input compact" id="manager-name-input"
+                value="${escapeAttr(myManager || '')}"
+                maxlength="30"
+                placeholder="Your team name"
+                style="max-width:220px">
+              <button class="btn btn-sm" onclick="saveManagerName()">Save</button>
+            </div>
+            <div class="error" id="manager-name-err" style="margin-top:4px"></div>
+            <div class="input-help">This is how your team appears to everyone in this league. You can change it anytime.</div>
           </div>
           ` : ''}
 
@@ -3368,6 +3376,57 @@ function renderMySettings(body) {
 }
 
 // Save rival message — either for this league only, or apply to all leagues
+async function saveManagerName() {
+  const err = document.getElementById('manager-name-err');
+  err.textContent = ''; err.style.color = '';
+  const newName = document.getElementById('manager-name-input')?.value.trim();
+  if (!newName) { err.textContent = 'Team name cannot be empty'; return; }
+  const leagueId = CURRENT_LEAGUE?.league?.id;
+  if (!leagueId) return;
+
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ action: 'rename-manager', leagueId, newName }),
+    });
+    const res = await r.json();
+    if (!res.ok) { err.textContent = res.error || 'Failed to save'; return; }
+
+    // Update CURRENT_LEAGUE in memory so the rest of the UI reflects
+    // the new name immediately without a full page reload
+    const oldName = CURRENT_LEAGUE.myManager;
+    CURRENT_LEAGUE.myManager = res.manager;
+
+    // Update member record in memory
+    const myMember = (CURRENT_LEAGUE.league.members || []).find(m =>
+      m.email?.toLowerCase() === SESSION.email?.toLowerCase() ||
+      m.manager === oldName
+    );
+    if (myMember) myMember.manager = res.manager;
+
+    // Update managers array in memory
+    const idx = (CURRENT_LEAGUE.league.managers || []).indexOf(oldName);
+    if (idx !== -1) CURRENT_LEAGUE.league.managers[idx] = res.manager;
+
+    // Update month roster keys in memory
+    for (const monthKey of Object.keys(CURRENT_LEAGUE.league.months || {})) {
+      const rosters = CURRENT_LEAGUE.league.months[monthKey].rosters;
+      if (rosters?.[oldName] !== undefined) {
+        rosters[res.manager] = rosters[oldName];
+        delete rosters[oldName];
+      }
+    }
+
+    err.style.color = 'var(--green)';
+    err.style.fontWeight = '600';
+    err.textContent = `✓ Team name updated to "${res.manager}"`;
+    setTimeout(() => { err.textContent = ''; err.style.color = ''; err.style.fontWeight = ''; }, 3000);
+  } catch (e) {
+    err.textContent = 'Connection failed';
+  }
+}
+
 async function saveRivalMessage(applyToAll) {
   const err = document.getElementById('rival-msg-err');
   if (err) { err.textContent = ''; err.style.color = ''; }

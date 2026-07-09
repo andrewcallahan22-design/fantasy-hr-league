@@ -442,6 +442,67 @@ export default async (req) => {
     return Response.json({ ok: true, month: newMonthKey }, { headers: NO_CACHE });
   }
 
+  // ── RENAME MY TEAM ──
+  // Any active manager can rename their own team. Updates the member record,
+  // the managers array, all roster keys, and all historical month data so
+  // standings and history stay consistent.
+  if (body.action === 'rename-manager') {
+    const newName = String(body.newName || '').trim();
+    if (!newName) return Response.json({ ok: false, error: 'Team name cannot be empty' }, { status: 400 });
+    if (newName.length > 30) return Response.json({ ok: false, error: 'Team name max 30 characters' }, { status: 400 });
+
+    // Find this user's current member record
+    const myMember = (league.members || []).find(m =>
+      m.email?.toLowerCase() === session.email?.toLowerCase()
+    );
+    if (!myMember || myMember.status !== 'active') {
+      return Response.json({ ok: false, error: 'You are not an active member of this league' }, { status: 403 });
+    }
+    const oldName = myMember.manager;
+    if (oldName === newName) return Response.json({ ok: true, manager: newName }, { headers: NO_CACHE });
+
+    // Check name isn't taken by another manager
+    const taken = (league.members || []).some(m =>
+      m.manager?.toLowerCase() === newName.toLowerCase() && m.email?.toLowerCase() !== session.email?.toLowerCase()
+    );
+    if (taken) return Response.json({ ok: false, error: `"${newName}" is already taken by another manager` }, { status: 400 });
+
+    // Update member record
+    myMember.manager = newName;
+
+    // Update managers array
+    const idx = league.managers.indexOf(oldName);
+    if (idx !== -1) league.managers[idx] = newName;
+
+    // Update all month rosters (rename the key)
+    for (const monthKey of Object.keys(league.months || {})) {
+      const rosters = league.months[monthKey].rosters;
+      if (rosters && rosters[oldName] !== undefined) {
+        rosters[newName] = rosters[oldName];
+        delete rosters[oldName];
+      }
+    }
+
+    // Update draft picks if a draft is in progress or completed
+    if (league.draft) {
+      if (league.draft.order) {
+        league.draft.order = league.draft.order.map(m => m === oldName ? newName : m);
+      }
+      if (league.draft.fullOrder) {
+        league.draft.fullOrder = league.draft.fullOrder.map(m => m === oldName ? newName : m);
+      }
+      for (const pick of (league.draft.picks || [])) {
+        if (pick.mgr === oldName) pick.mgr = newName;
+      }
+    }
+
+    // Update commissioner field if this user is the commissioner
+    // (commissioner is stored by email so this doesn't need changing)
+
+    await saveLeague(league);
+    return Response.json({ ok: true, manager: newName }, { headers: NO_CACHE });
+  }
+
   // ── SET RIVAL MESSAGE (per-league trash talk) ──
   // Stores the manager's custom rival notification message on their member
   // record in this specific league. Separate from the global account setting.
