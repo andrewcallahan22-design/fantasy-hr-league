@@ -2399,8 +2399,12 @@ function renderRostersEdit(body) {
     `;
   }
 
+  const irMode      = league.settings?.irMode || 'hold';
+  const hrCarryover = league.settings?.irHrCarryover || 'keep';
+
   // ── STARTER SLOTS ──
-  // Render only non-IR slots here. IR slots are pinned at the bottom.
+  // In both modes, render active starters here.
+  // In swap mode, swapped-out slots show the replacement with a swap badge.
   html += `<div class="panel" style="margin-bottom:12px"><div class="panel-body" style="padding:0"><table class="data-table">
     <thead><tr>
       <th>Player</th>
@@ -2413,19 +2417,30 @@ function renderRostersEdit(body) {
 
   for (let i = 0; i < roster.length; i++) {
     const p = roster[i];
-    if (p.irPlayer) continue; // IR slots rendered separately below
+    if (p.irPlayer) continue; // True IR mode — rendered in IR section below
 
     const healthObj = league.health?.[normNameFE(p.player || '')];
     const health = typeof healthObj === 'string' ? healthObj : (healthObj?.status || healthObj?.code || '');
     const isIL = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
     const canMoveToIR = canEdit && irSlots > 0 && p.player && (isIL || isCommish || isAdmin) && irCount < irSlots;
+    const hasSwap = !!p.swappedOut; // Permanent swap mode — slot shows replacement
+
+    // Swap mode: show carryover HRs + replacement HRs
+    const displayHR = hasSwap
+      ? (parseInt(p.hrFromSwapped)||0) + (parseInt(p.hr)||0)
+      : parseInt(p.hr)||0;
 
     const playerNameCell = p.player
-      ? `<button data-player="${escapeAttr(p.player)}" onclick="openPlayerProfile(this.dataset.player,null)"
-           class="player-link" style="text-align:left;font-size:13px;font-weight:600">
-           ${escapeHtml(p.player)}
-         </button>
-         ${isIL ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.15);padding:1px 5px;border-radius:3px;margin-left:5px">IL</span>' : ''}`
+      ? `<div>
+           <button data-player="${escapeAttr(p.player)}" onclick="openPlayerProfile(this.dataset.player,null)"
+             class="player-link" style="font-size:13px;font-weight:600">${escapeHtml(p.player)}</button>
+           ${isIL ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.15);padding:1px 5px;border-radius:3px;margin-left:5px">IL</span>' : ''}
+           ${hasSwap ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+             ⇄ Replaced <button data-player="${escapeAttr(p.swappedOut)}" onclick="openPlayerProfile(this.dataset.player,null)" class="player-link" style="font-size:10px">${escapeHtml(p.swappedOut)}</button>
+             on ${new Date(p.swappedOutAt||Date.now()).toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+             ${hrCarryover==='keep' ? `· +${parseInt(p.hrFromSwapped)||0} HR carried over` : '· no carryover'}
+           </div>` : ''}
+         </div>`
       : `<span style="color:var(--text-faint);font-size:13px">Empty slot</span>`;
 
     html += `<tr>
@@ -2434,54 +2449,50 @@ function renderRostersEdit(body) {
       <td style="font-size:12px">${escapeHtml(p.position||'') || '—'}</td>
       <td class="right">
         ${(isCommish || isAdmin)
-          ? `<input class="hr-input" type="number" min="0" value="${parseInt(p.hr)||0}"
+          ? `<input class="hr-input" type="number" min="0" value="${displayHR}"
                onchange="editSlot('${escapeAttr(viewMgr)}',${i},'hr',this.value)"
                title="Click to edit" style="width:52px;text-align:right">`
-          : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${parseInt(p.hr)||0}</span>`}
+          : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${displayHR}</span>`}
       </td>
       ${canEdit ? `<td style="text-align:center">
-        ${canMoveToIR ? `<button class="btn btn-sm" style="font-size:11px;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" onclick="moveToIR('${escapeAttr(viewMgr)}',${i})">→ IR</button>` : ''}
+        ${canMoveToIR && !hasSwap ? `<button class="btn btn-sm" style="font-size:11px;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" onclick="moveToIR('${escapeAttr(viewMgr)}',${i})">${irMode==='swap' ? '⇄ Swap out' : '→ IR'}</button>` : ''}
+        ${!p.player && canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--accent)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">+ Pick up player</button>` : ''}
       </td>` : ''}
     </tr>`;
   }
 
   html += `</tbody></table></div></div>`;
 
-  // ── IR SLOTS ──
-  // Pinned at the bottom — IR player + their replacement shown together
+  // ── TRUE IR SECTION (hold mode only) ──
   const irSlotIndices = roster.map((p,i) => p.irPlayer ? i : -1).filter(i => i >= 0);
   const emptyIRCount = Math.max(0, irSlots - irSlotIndices.length);
 
-  if (irSlots > 0 && (irSlotIndices.length > 0 || isCurrentMonth)) {
+  if (irMode === 'hold' && irSlots > 0 && (irSlotIndices.length > 0 || isCurrentMonth)) {
     html += `<div class="panel" style="margin-bottom:12px;border-color:rgba(239,68,68,0.3)">
       <div class="panel-header" style="color:var(--red);font-size:12px">🏥 Injured Reserve (${irSlotIndices.length}/${irSlots} used)</div>
       <div class="panel-body" style="padding:0">`;
 
-    // Occupied IR slots
     for (const i of irSlotIndices) {
       const p = roster[i];
       const replacementHR = parseInt(p.hr) || 0;
       const irPlayerHR = parseInt(p.irHr) || 0;
       const totalSlotHR = irPlayerHR + replacementHR;
-      const canReturn = canEdit;
 
       html += `
         <div style="padding:12px 14px;border-bottom:1px dashed rgba(239,68,68,0.2)">
-          <!-- IR Player row -->
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
             <span style="font-size:10px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.12);padding:2px 6px;border-radius:3px;flex-shrink:0">IR</span>
             <div style="flex:1">
               <button data-player="${escapeAttr(p.irPlayer)}" onclick="openPlayerProfile(this.dataset.player,null)"
                 class="player-link" style="font-size:13px;font-weight:700">${escapeHtml(p.irPlayer)}</button>
               <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${escapeHtml(p.irTeam)} · ${escapeHtml(p.irPosition)}</span>
+              ${p.irMovedAt ? `<span style="font-size:10px;color:var(--text-faint);margin-left:8px">since ${new Date(p.irMovedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>` : ''}
             </div>
             <div style="text-align:right">
               <div style="font-family:'Roboto Mono',monospace;font-weight:700;font-size:14px">${irPlayerHR} HR</div>
-              <div style="font-size:9px;color:var(--text-faint)">before injury</div>
+              <div style="font-size:9px;color:var(--text-faint)">${hrCarryover==='keep' ? 'carried over' : 'not counted'}</div>
             </div>
           </div>
-
-          <!-- Replacement row -->
           <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(0,0,0,0.2);border-radius:6px;margin-bottom:8px">
             <span style="font-size:10px;font-weight:700;color:var(--text-muted);background:rgba(255,255,255,0.06);padding:2px 6px;border-radius:3px;flex-shrink:0">FILL</span>
             ${p.player ? `
@@ -2492,36 +2503,32 @@ function renderRostersEdit(body) {
               </div>
               <div style="text-align:right">
                 <div style="font-family:'Roboto Mono',monospace;font-weight:700;font-size:14px">${replacementHR} HR</div>
-                <div style="font-size:9px;color:var(--text-faint)">as replacement</div>
+                <div style="font-size:9px;color:var(--text-faint)">as fill-in</div>
               </div>
             ` : `
               <div style="flex:1;color:var(--text-faint);font-size:12px">No replacement yet</div>
               ${canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--accent)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">+ Pick up player</button>` : ''}
             `}
           </div>
-
-          <!-- Total + actions -->
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <div style="font-size:12px;color:var(--text-muted)">
-              Combined: <strong style="color:var(--accent)">${totalSlotHR} HR</strong>
+              Total: <strong style="color:var(--accent)">${totalSlotHR} HR</strong>
               <span style="font-size:11px;color:var(--text-faint)">(${irPlayerHR} + ${replacementHR})</span>
             </div>
             <div style="display:flex;gap:6px">
-              ${p.player && canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--accent)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">⇄ Change replacement</button>` : ''}
-              ${canReturn ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="returnFromIR('${escapeAttr(viewMgr)}',${i})">↩ Return to lineup</button>` : ''}
+              ${p.player && canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">⇄ Change</button>` : ''}
+              ${canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="returnFromIR('${escapeAttr(viewMgr)}',${i})">↩ Return to lineup</button>` : ''}
             </div>
           </div>
         </div>`;
     }
 
-    // Empty IR slots
     for (let n = 0; n < emptyIRCount; n++) {
       html += `<div style="padding:12px 14px;display:flex;align-items:center;gap:10px;color:var(--text-faint)">
         <span style="font-size:10px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.08);padding:2px 6px;border-radius:3px">IR</span>
         <span style="font-size:12px">Empty — tap <strong style="color:var(--red)">→ IR</strong> on an injured starter to use this slot</span>
       </div>`;
     }
-
     html += `</div></div>`;
   }
 
@@ -4826,7 +4833,25 @@ function renderSettings(body) {
                 <option value="2" ${s.irSlots==2 ? 'selected' : ''}>2 IR slots</option>
                 <option value="3" ${s.irSlots==3 ? 'selected' : ''}>3 IR slots</option>
               </select>
-              <div class="input-help">Injured Reserve — lets managers hold a hurt player while adding a temporary replacement. Player must be on the MLB IL to move to IR.</div>
+              <div class="input-help">Injured Reserve — lets managers hold or swap out a hurt player.</div>
+            </div>
+            <div class="field">
+              <label>IR mode</label>
+              <select class="select" id="set-irMode">
+                <option value="hold" ${(s.irMode||'hold')==='hold' ? 'selected' : ''}>True IR — player holds their slot, can return to lineup</option>
+                <option value="swap" ${s.irMode==='swap' ? 'selected' : ''}>Permanent swap — replacement takes the spot for the month</option>
+              </select>
+              <div class="input-help"><strong>True IR:</strong> Injured player stays on your roster in an IR slot at the bottom. They can return when healthy. <strong>Permanent swap:</strong> Injured player is removed for the month, replacement takes their starter spot. Transaction is logged for transparency.</div>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="field">
+              <label>Injured player's HR carryover</label>
+              <select class="select" id="set-irHrCarryover">
+                <option value="keep" ${(s.irHrCarryover||'keep')==='keep' ? 'selected' : ''}>Keep — injured player's HRs count toward the month</option>
+                <option value="drop" ${s.irHrCarryover==='drop' ? 'selected' : ''}>Drop — start fresh with replacement player only</option>
+              </select>
+              <div class="input-help"><strong>Keep:</strong> Any HRs the injured player hit before going to IR still count for your month total. <strong>Drop:</strong> Only the replacement player's HRs count from the swap date forward.</div>
             </div>
             <div class="field">
               <label>IR replacement rule</label>
@@ -4834,7 +4859,7 @@ function renderSettings(body) {
                 <option value="any-available" ${(s.irReplacementRule||'any-available')==='any-available' ? 'selected' : ''}>Any available player</option>
                 <option value="same-team" ${s.irReplacementRule==='same-team' ? 'selected' : ''}>Must be from same MLB team as IR player</option>
               </select>
-              <div class="input-help">Controls which players can fill in for an IR slot. "Same team" is stricter but keeps it interesting.</div>
+              <div class="input-help">Controls which players can fill in. "Same team" is stricter but keeps it interesting.</div>
             </div>
           </div>
           <div class="settings-row">
@@ -5006,7 +5031,7 @@ function initSettingsDirtyTracking() {
   if (!btn) return;
 
   // Capture initial snapshot of all settings values
-  const ids = ['set-rosterSize','set-redraftCadence','set-positionRule','set-teamRule','set-multiPlayerPerTeam','set-scoringCategories','set-irSlots','set-irReplacementRule','set-waiverType'];
+  const ids = ['set-rosterSize','set-redraftCadence','set-positionRule','set-teamRule','set-multiPlayerPerTeam','set-scoringCategories','set-irSlots','set-irMode','set-irHrCarryover','set-irReplacementRule','set-waiverType'];
   const snapshot = {};
   for (const id of ids) {
     const el = document.getElementById(id);
@@ -5053,6 +5078,8 @@ async function saveSettings() {
     multiPlayerPerTeam:  document.getElementById('set-multiPlayerPerTeam').value === 'true',
     scoringCategories:   [...document.getElementById('set-scoringCategories').selectedOptions].map(o => o.value),
     irSlots:             parseInt(document.getElementById('set-irSlots').value) || 0,
+    irMode:              document.getElementById('set-irMode').value,
+    irHrCarryover:       document.getElementById('set-irHrCarryover').value,
     irReplacementRule:   document.getElementById('set-irReplacementRule').value,
     waiverType:          document.getElementById('set-waiverType').value,
   };
