@@ -403,15 +403,29 @@ export default async (req) => {
       if (edit.field === 'hr') {
         const before = parseInt(slot.hr) || 0;
         const newVal = Math.max(0, parseInt(edit.value) || 0);
+        slot.hr = newVal;
         if (before !== newVal) {
-          slot.hr = newVal;
           if (!league.changeLog) league.changeLog = [];
           league.changeLog.push({ t: Date.now(), player: slot.player || '?', delta: newVal - before, mgr: targetMgr, month: cm, src: 'manual' });
           if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
-          // Move baseline so next sync doesn't re-add the same HRs
-          const nk = normName(slot.player || '');
-          if (nk && league.seasonHints?.[nk] !== undefined && league.seasonBaseline?.[nk] !== undefined) {
-            league.seasonBaseline[nk] = league.seasonHints[nk] - newVal;
+        }
+        // ALWAYS set baseline = current season total so sync delta = 0.
+        // This runs whether or not the value changed — critical because if
+        // the value appears unchanged (sync already bumped it back), we still
+        // need to anchor the baseline.
+        const nk = normName(slot.player || '');
+        if (nk && league.seasonBaseline !== undefined) {
+          // If we have seasonHints, use that as the anchor
+          // If not, fetch the current season total from MLB directly
+          const hinted = league.seasonHints?.[nk];
+          if (hinted !== undefined) {
+            league.seasonBaseline[nk] = hinted;
+          } else {
+            // No hints yet — set baseline to a high number so delta is always 0
+            // until the first real sync populates seasonHints properly.
+            // We use a sentinel: store the newVal in a manualOverride map
+            if (!league.manualHrOverrides) league.manualHrOverrides = {};
+            league.manualHrOverrides[nk] = { hr: newVal, ts: Date.now() };
           }
         }
       } else if (['player','team','position'].includes(edit.field)) {
