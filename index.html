@@ -2345,7 +2345,7 @@ function renderRostersEdit(body) {
   const roster = month?.rosters?.[viewMgr] || [];
   const irCount = roster.filter(s => s.irPlayer).length;
   const isCurrentMonth = viewMonth === currentMonth;
-  const canEdit = isCurrentMonth && (viewMgr === myManager || isCommish || isAdmin);
+  const canEdit = (isCommish || isAdmin) || (isCurrentMonth && viewMgr === myManager);
 
   // Month total HR (including IR HRs)
   const totalHR = roster.reduce((s, p) => s + (parseInt(p.irHr)||0) + (parseInt(p.hr)||0), 0);
@@ -2357,6 +2357,7 @@ function renderRostersEdit(body) {
         <div style="font-size:13px;color:var(--text-muted);margin-top:2px">
           ${escapeHtml(viewMonth)} · <strong style="color:var(--accent)">${totalHR} HR</strong>
           ${irSlots ? ` · IR: ${irCount}/${irSlots}` : ''}
+          ${(isCommish || isAdmin) ? ` · <span style="color:var(--text-faint);font-size:11px">✏ Click HR to edit</span>` : ''}
         </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2444,9 +2445,14 @@ function renderRostersEdit(body) {
       <td style="font-size:12px">${escapeHtml(hasIR ? p.irPosition : (p.position||''))||'—'}</td>
       <td class="right">
         ${hasIR
-          ? `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${totalSlotHR}</span>
+          ? `<div style="font-family:'Roboto Mono',monospace;font-weight:700">${totalSlotHR}</div>
              <div style="font-size:9px;color:var(--text-faint)">${p.irHr||0}+${p.hr||0}</div>`
-          : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${parseInt(p.hr)||0}</span>`}
+          : (isCommish || isAdmin)
+            ? `<input class="hr-input" type="number" min="0" value="${parseInt(p.hr)||0}"
+                 onchange="editSlot('${escapeAttr(viewMgr)}',${i},'hr',this.value)"
+                 title="Click to edit HR count"
+                 style="width:52px;text-align:right">`
+            : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${parseInt(p.hr)||0}</span>`}
       </td>
       ${canEdit && (irSlots || waiverType !== 'none') ? `<td style="text-align:center">${actionCell}</td>` : ''}
     </tr>`;
@@ -2825,6 +2831,7 @@ async function submitWaiverClaim(mgr, slotIndex) {
   renderActiveTab();
 }
 async function editSlot(manager, slotIndex, field, value) {
+  const viewMonth = document.getElementById('tab-body')?._viewMonth || CURRENT_LEAGUE.league.currentMonth;
   setSyncUI('loading', 'Saving…');
   try {
     const r = await fetch(API_LEAGUE, {
@@ -2834,7 +2841,7 @@ async function editSlot(manager, slotIndex, field, value) {
         action: 'save-state',
         leagueId: CURRENT_LEAGUE.league.id,
         edits: [{ manager, slotIndex, field, value }],
-        month: CURRENT_LEAGUE.league.currentMonth,
+        month: viewMonth,
       }),
     });
     const res = await r.json();
