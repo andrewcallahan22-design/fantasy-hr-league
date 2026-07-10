@@ -2362,12 +2362,12 @@ function renderRostersEdit(body) {
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         ${allMonths.length > 1 ? `
-          <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderRostersWithOptions(body, '${escapeAttr(viewMgr)}', this.value)">
+          <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderRostersWithOptions(document.getElementById('tab-body'), '${escapeAttr(viewMgr)}', this.value)">
             ${allMonths.map(m => `<option value="${escapeAttr(m)}" ${m===viewMonth?'selected':''}>${escapeHtml(m)}${m===currentMonth?' (current)':''}</option>`).join('')}
           </select>
         ` : ''}
         ${(isCommish || isAdmin) && league.managers.length > 1 ? `
-          <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderRostersWithOptions(body, this.value, '${escapeAttr(viewMonth)}')">
+          <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderRostersWithOptions(document.getElementById('tab-body'), this.value, '${escapeAttr(viewMonth)}')">
             ${league.managers.map(m => `<option value="${escapeAttr(m)}" ${m===viewMgr?'selected':''}>${escapeHtml(m)}</option>`).join('')}
           </select>
         ` : ''}
