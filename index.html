@@ -1620,7 +1620,7 @@ function renderLeagueShell() {
   const tabs = [
     { id: 'scoreboard',  label: 'Scoreboard' },
     { id: 'standings',   label: 'Standings' },
-    { id: 'edit',        label: 'Rosters' },
+    { id: 'edit',        label: 'Roster' },
     { id: 'history',     label: 'History' },
     { id: 'draft',       label: 'Draft' },
     // My Settings is visible to every signed-in member
@@ -2399,90 +2399,132 @@ function renderRostersEdit(body) {
     `;
   }
 
-  // Roster table
+  // ── STARTER SLOTS ──
+  // Render only non-IR slots here. IR slots are pinned at the bottom.
   html += `<div class="panel" style="margin-bottom:12px"><div class="panel-body" style="padding:0"><table class="data-table">
     <thead><tr>
       <th>Player</th>
       <th>Team</th>
       <th>Pos</th>
       <th class="right">HR</th>
-      ${canEdit && (irSlots || waiverType !== 'none') ? '<th style="text-align:center">Manage</th>' : ''}
+      ${canEdit ? '<th style="text-align:center"></th>' : ''}
     </tr></thead>
     <tbody>`;
 
   for (let i = 0; i < roster.length; i++) {
     const p = roster[i];
-    const hasIR = !!p.irPlayer;
-    const playerDisplay = hasIR ? p.irPlayer : (p.player || '');
-    const healthObj = league.health?.[normNameFE(playerDisplay)];
+    if (p.irPlayer) continue; // IR slots rendered separately below
+
+    const healthObj = league.health?.[normNameFE(p.player || '')];
     const health = typeof healthObj === 'string' ? healthObj : (healthObj?.status || healthObj?.code || '');
     const isIL = health.toLowerCase().includes('il') || health.toLowerCase().includes('dl') || health.toLowerCase().includes('day');
-    const canMoveToIR = canEdit && irSlots > 0 && !hasIR && p.player && (isIL || isCommish || isAdmin) && irCount < irSlots;
-    const canReturn = canEdit && hasIR;
-    const canWaiver = canEdit && waiverType !== 'none';
-    const totalSlotHR = (parseInt(p.irHr)||0) + (parseInt(p.hr)||0);
+    const canMoveToIR = canEdit && irSlots > 0 && p.player && (isIL || isCommish || isAdmin) && irCount < irSlots;
 
-    let actionCell = '';
-    if (hasIR) {
-      // IR slot: ↩ return button + pick up button on the open slot
-      actionCell = `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
-        ${canReturn ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="returnFromIR('${escapeAttr(viewMgr)}',${i})">↩ Return to lineup</button>` : ''}
-        ${!p.player && canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--accent)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">+ Pick up replacement</button>` : ''}
-      </div>`;
-    } else if (canMoveToIR) {
-      // IL player — IR button only, no waiver
-      actionCell = `<button class="btn btn-sm" style="font-size:11px;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" onclick="moveToIR('${escapeAttr(viewMgr)}',${i})">→ IR</button>`;
-    }
-    // Healthy players get no action buttons — waiver is a standalone section below
+    const playerNameCell = p.player
+      ? `<button data-player="${escapeAttr(p.player)}" onclick="openPlayerProfile(this.dataset.player,null)"
+           class="player-link" style="text-align:left;font-size:13px;font-weight:600">
+           ${escapeHtml(p.player)}
+         </button>
+         ${isIL ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.15);padding:1px 5px;border-radius:3px;margin-left:5px">IL</span>' : ''}`
+      : `<span style="color:var(--text-faint);font-size:13px">Empty slot</span>`;
 
-    html += `<tr style="${hasIR ? 'background:rgba(239,68,68,0.04)' : ''}">
-      <td>
-        <div style="font-weight:600;font-size:13px">${escapeHtml(playerDisplay) || '<span style="color:var(--text-faint)">Empty slot</span>'}
-          ${isIL && !hasIR ? '<span style="font-size:9px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.15);padding:1px 5px;border-radius:3px;margin-left:5px">IL</span>' : ''}
-        </div>
-        ${hasIR ? `
-          <div style="font-size:11px;color:var(--red);margin-top:3px">🏥 On IR — temp slot open</div>
-          ${p.player ? `<div style="font-size:11px;color:var(--text-muted)">Replacement: <strong>${escapeHtml(p.player)}</strong></div>` : `<div style="font-size:11px;color:var(--accent)">← Tap "+ Pick up replacement" to fill this slot</div>`}
-        ` : ''}
-      </td>
-      <td style="font-size:12px">${escapeHtml(hasIR ? p.irTeam : (p.team||''))||'—'}</td>
-      <td style="font-size:12px">${escapeHtml(hasIR ? p.irPosition : (p.position||''))||'—'}</td>
+    html += `<tr>
+      <td>${playerNameCell}</td>
+      <td style="font-size:12px">${escapeHtml(p.team||'') || '—'}</td>
+      <td style="font-size:12px">${escapeHtml(p.position||'') || '—'}</td>
       <td class="right">
-        ${hasIR
-          ? `<div style="font-family:'Roboto Mono',monospace;font-weight:700">${totalSlotHR}</div>
-             <div style="font-size:9px;color:var(--text-faint)">${p.irHr||0}+${p.hr||0}</div>`
-          : (isCommish || isAdmin)
-            ? `<input class="hr-input" type="number" min="0" value="${parseInt(p.hr)||0}"
-                 onchange="editSlot('${escapeAttr(viewMgr)}',${i},'hr',this.value)"
-                 title="Click to edit HR count"
-                 style="width:52px;text-align:right">`
-            : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${parseInt(p.hr)||0}</span>`}
+        ${(isCommish || isAdmin)
+          ? `<input class="hr-input" type="number" min="0" value="${parseInt(p.hr)||0}"
+               onchange="editSlot('${escapeAttr(viewMgr)}',${i},'hr',this.value)"
+               title="Click to edit" style="width:52px;text-align:right">`
+          : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${parseInt(p.hr)||0}</span>`}
       </td>
-      ${canEdit && (irSlots || waiverType !== 'none') ? `<td style="text-align:center">${actionCell}</td>` : ''}
+      ${canEdit ? `<td style="text-align:center">
+        ${canMoveToIR ? `<button class="btn btn-sm" style="font-size:11px;background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)" onclick="moveToIR('${escapeAttr(viewMgr)}',${i})">→ IR</button>` : ''}
+      </td>` : ''}
     </tr>`;
   }
 
-  // Always render IR slot rows — empty or occupied
-  // This makes it obvious the feature exists even before anyone uses it
-  if (irSlots > 0 && isCurrentMonth) {
-    const occupiedIRCount = roster.filter(s => s.irPlayer).length;
-    const emptyIRSlots = irSlots - occupiedIRCount;
-    for (let n = 0; n < emptyIRSlots; n++) {
-      html += `<tr style="background:rgba(239,68,68,0.03)">
-        <td colspan="2">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:11px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.12);padding:2px 7px;border-radius:3px">IR SLOT</span>
-            <span style="font-size:12px;color:var(--text-faint)">Empty — move an injured player here</span>
+  html += `</tbody></table></div></div>`;
+
+  // ── IR SLOTS ──
+  // Pinned at the bottom — IR player + their replacement shown together
+  const irSlotIndices = roster.map((p,i) => p.irPlayer ? i : -1).filter(i => i >= 0);
+  const emptyIRCount = Math.max(0, irSlots - irSlotIndices.length);
+
+  if (irSlots > 0 && (irSlotIndices.length > 0 || isCurrentMonth)) {
+    html += `<div class="panel" style="margin-bottom:12px;border-color:rgba(239,68,68,0.3)">
+      <div class="panel-header" style="color:var(--red);font-size:12px">🏥 Injured Reserve (${irSlotIndices.length}/${irSlots} used)</div>
+      <div class="panel-body" style="padding:0">`;
+
+    // Occupied IR slots
+    for (const i of irSlotIndices) {
+      const p = roster[i];
+      const replacementHR = parseInt(p.hr) || 0;
+      const irPlayerHR = parseInt(p.irHr) || 0;
+      const totalSlotHR = irPlayerHR + replacementHR;
+      const canReturn = canEdit;
+
+      html += `
+        <div style="padding:12px 14px;border-bottom:1px dashed rgba(239,68,68,0.2)">
+          <!-- IR Player row -->
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:10px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.12);padding:2px 6px;border-radius:3px;flex-shrink:0">IR</span>
+            <div style="flex:1">
+              <button data-player="${escapeAttr(p.irPlayer)}" onclick="openPlayerProfile(this.dataset.player,null)"
+                class="player-link" style="font-size:13px;font-weight:700">${escapeHtml(p.irPlayer)}</button>
+              <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${escapeHtml(p.irTeam)} · ${escapeHtml(p.irPosition)}</span>
+            </div>
+            <div style="text-align:right">
+              <div style="font-family:'Roboto Mono',monospace;font-weight:700;font-size:14px">${irPlayerHR} HR</div>
+              <div style="font-size:9px;color:var(--text-faint)">before injury</div>
+            </div>
           </div>
-        </td>
-        <td style="font-size:12px;color:var(--text-faint)">—</td>
-        <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-faint)">—</td>
-        ${canEdit && (irSlots || waiverType !== 'none') ? `<td></td>` : ''}
-      </tr>`;
+
+          <!-- Replacement row -->
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(0,0,0,0.2);border-radius:6px;margin-bottom:8px">
+            <span style="font-size:10px;font-weight:700;color:var(--text-muted);background:rgba(255,255,255,0.06);padding:2px 6px;border-radius:3px;flex-shrink:0">FILL</span>
+            ${p.player ? `
+              <div style="flex:1">
+                <button data-player="${escapeAttr(p.player)}" onclick="openPlayerProfile(this.dataset.player,null)"
+                  class="player-link" style="font-size:13px;font-weight:600">${escapeHtml(p.player)}</button>
+                <span style="font-size:11px;color:var(--text-muted);margin-left:8px">${escapeHtml(p.team||'')} · ${escapeHtml(p.position||'')}</span>
+              </div>
+              <div style="text-align:right">
+                <div style="font-family:'Roboto Mono',monospace;font-weight:700;font-size:14px">${replacementHR} HR</div>
+                <div style="font-size:9px;color:var(--text-faint)">as replacement</div>
+              </div>
+            ` : `
+              <div style="flex:1;color:var(--text-faint);font-size:12px">No replacement yet</div>
+              ${canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--accent)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">+ Pick up player</button>` : ''}
+            `}
+          </div>
+
+          <!-- Total + actions -->
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div style="font-size:12px;color:var(--text-muted)">
+              Combined: <strong style="color:var(--accent)">${totalSlotHR} HR</strong>
+              <span style="font-size:11px;color:var(--text-faint)">(${irPlayerHR} + ${replacementHR})</span>
+            </div>
+            <div style="display:flex;gap:6px">
+              ${p.player && canEdit ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--accent)" onclick="openWaiverClaim('${escapeAttr(viewMgr)}',${i})">⇄ Change replacement</button>` : ''}
+              ${canReturn ? `<button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--green)" onclick="returnFromIR('${escapeAttr(viewMgr)}',${i})">↩ Return to lineup</button>` : ''}
+            </div>
+          </div>
+        </div>`;
     }
+
+    // Empty IR slots
+    for (let n = 0; n < emptyIRCount; n++) {
+      html += `<div style="padding:12px 14px;display:flex;align-items:center;gap:10px;color:var(--text-faint)">
+        <span style="font-size:10px;font-weight:700;color:var(--red);background:rgba(239,68,68,0.08);padding:2px 6px;border-radius:3px">IR</span>
+        <span style="font-size:12px">Empty — tap <strong style="color:var(--red)">→ IR</strong> on an injured starter to use this slot</span>
+      </div>`;
+    }
+
+    html += `</div></div>`;
   }
 
-  html += `</tbody></table></div></div>`;
 
   // Past months summary
   if (allMonths.length > 1) {
@@ -2491,17 +2533,25 @@ function renderRostersEdit(body) {
         <div class="panel-header">Monthly history — ${escapeHtml(viewMgr)}</div>
         <div class="panel-body" style="padding:0">
           <table class="data-table">
-            <thead><tr><th>Month</th><th class="right">HR</th><th style="text-align:center">Result</th></tr></thead>
+            <thead><tr><th>Month</th><th class="right">HR</th><th>IR Activity</th><th style="text-align:center">Result</th></tr></thead>
             <tbody>
               ${allMonths.map(m => {
                 const mRoster = league.months[m]?.rosters?.[viewMgr] || [];
                 const mHR = mRoster.reduce((s,p) => s + (parseInt(p.irHr)||0) + (parseInt(p.hr)||0), 0);
                 const isActive = m === currentMonth;
+                // Collect IR history from all slots this month
+                const irRecords = mRoster.flatMap(p => p.irHistory || []);
+                const irCell = irRecords.length
+                  ? irRecords.map(r => `<span style="font-size:11px;color:var(--text-muted)">
+                      🏥 <strong>${escapeHtml(r.replacement)}</strong> filled in → <strong style="color:var(--accent)">${r.replacementHR} HR</strong>
+                    </span>`).join('<br>')
+                  : '<span style="font-size:11px;color:var(--text-faint)">—</span>';
                 return `<tr style="${isActive ? 'background:rgba(240,199,94,0.05)' : ''}">
                   <td>
                     <button class="btn btn-sm btn-ghost" style="font-size:12px" onclick="renderRostersWithOptions(document.getElementById('tab-body'), '${escapeAttr(viewMgr)}', '${escapeAttr(m)}')">${escapeHtml(m)}${isActive?' <span style="font-size:9px;color:var(--accent)">(current)</span>':''}</button>
                   </td>
                   <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700">${mHR}</td>
+                  <td>${irCell}</td>
                   <td style="text-align:center;font-size:11px;color:var(--text-muted)">${isActive ? '—' : '✓ Final'}</td>
                 </tr>`;
               }).join('')}
@@ -2675,61 +2725,35 @@ async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, bloc
   try {
     let allPlayers = [];
 
-    if (requiredTeam) {
-      // Same-team rule: fetch roster for that specific team from MLB API
-      // Find team ID from our pool or use MLB team search
-      const teamSearch = await fetch(
-        `https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${new Date().getFullYear()}`,
-        { cache: 'no-store' }
+    // Always load the full draft pool — filter by team after if same-team rule applies
+    let pool = window._draftFullPool || [];
+    if (!pool.length) {
+      const r = await fetch(
+        `${API_DRAFT}?leagueId=${encodeURIComponent(league.id)}&fullPool=true`,
+        { headers: authHeaders(), cache: 'no-store' }
       );
-      const teamData = await teamSearch.json();
-      const team = (teamData.teams || []).find(t =>
-        t.abbreviation?.toUpperCase() === requiredTeam.toUpperCase()
-      );
-
-      if (team) {
-        const rosterResp = await fetch(
-          `https://statsapi.mlb.com/api/v1/teams/${team.id}/roster?rosterType=active&season=${new Date().getFullYear()}&hydrate=person(stats(type=season,group=hitting))`,
-          { cache: 'no-store' }
-        );
-        const rosterData = await rosterResp.json();
-        allPlayers = (rosterData.roster || []).map(p => ({
-          name: p.person?.fullName || '',
-          team: requiredTeam,
-          pos:  p.position?.abbreviation || '?',
-          hr:   parseInt(p.person?.stats?.[0]?.splits?.[0]?.stat?.homeRuns) || 0,
-          id:   p.person?.id,
-        }));
+      if (r.ok) {
+        const data = await r.json();
+        pool = data.pool || [];
+        if (pool.length) window._draftFullPool = pool;
       }
-    } else {
-      // Any available player: use the draft pool (reuse if cached, fetch if not)
-      let pool = window._draftFullPool || [];
-      if (!pool.length) {
-        const r = await fetch(
-          `${API_DRAFT}?leagueId=${encodeURIComponent(league.id)}&fullPool=true`,
-          { headers: authHeaders(), cache: 'no-store' }
-        );
-        if (r.ok) {
-          const data = await r.json();
-          pool = data.pool || [];
-          if (pool.length) window._draftFullPool = pool;
-        }
-      }
-      allPlayers = pool.map(p => ({ name: p.name, team: p.team, pos: p.pos, hr: p.hr || 0, id: p.id }));
     }
+    allPlayers = pool.map(p => ({ name: p.name, team: p.team, pos: p.pos, hr: p.hr || 0, prevHR: p.prevHR, id: p.id }));
 
-    // Apply filters: taken names, taken teams, blocked positions
+    // Filter: exclude taken, apply team rule, apply position blocking
     _waiverPool = allPlayers.filter(p => {
       if (!p.name) return false;
       if (takenNames.has(normNameFE(p.name))) return false;
+      if (requiredTeam && p.team?.toUpperCase() !== requiredTeam.toUpperCase()) return false;
       if (takenTeams.has(p.team?.toUpperCase())) return false;
       if (blockedPositions.has(p.pos)) return false;
       return true;
     });
 
-    // Sort by HR descending
+    // Sort by season HR descending
     _waiverPool.sort((a, b) => (b.hr || 0) - (a.hr || 0));
     _waiverBlockedPositions = blockedPositions;
+    window._waiverPositionRule = league.settings?.positionRule || 'one-duplicate-allowed';
 
     renderWaiverPool();
   } catch (e) {
@@ -2777,7 +2801,10 @@ function renderWaiverPool() {
       ${filtered.map(p => {
         const isSelected = _waiverSelected && normNameFE(_waiverSelected.name) === normNameFE(p.name);
         return `<tr style="${isSelected ? 'background:rgba(58,160,92,0.1)' : ''}">
-          <td style="font-weight:600">${escapeHtml(p.name)}</td>
+          <td>
+            <button data-player="${escapeAttr(p.name)}" onclick="openPlayerProfile(this.dataset.player,null)"
+              class="player-link" style="font-size:13px;font-weight:600">${escapeHtml(p.name)}</button>
+          </td>
           <td><span class="team-chip" style="font-size:9px">${escapeHtml(p.team||'?')}</span></td>
           <td><span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos||'?')}</span></td>
           <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700">${p.hr ?? '—'}</td>

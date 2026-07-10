@@ -592,12 +592,25 @@ export default async (req) => {
     const slot = roster[slotIdx];
     if (!slot?.irPlayer) return Response.json({ ok: false, error: 'No IR player in that slot' }, { status: 400 });
 
-    // Restore original player — replacement player HRs stay counted via slot.hr
-    slot.player = slot.irPlayer;
-    slot.team = slot.irTeam;
+    // Save a record of what the replacement did before returning IR player
+    const replacementHR = parseInt(slot.hr) || 0;
+    const replacementPlayer = slot.player || null;
+    slot.irHistory = slot.irHistory || [];
+    if (replacementPlayer) {
+      slot.irHistory.push({
+        replacement: replacementPlayer,
+        replacementTeam: slot.team,
+        replacementHR,
+        irStart: slot.irMovedAt,
+        irEnd: Date.now(),
+      });
+    }
+
+    // Restore original player — combined HRs = pre-injury + replacement
+    slot.player   = slot.irPlayer;
+    slot.team     = slot.irTeam;
     slot.position = slot.irPosition;
-    // Total HRs = replacement HRs (slot.hr) + original player IR HRs (slot.irHr)
-    slot.hr = (parseInt(slot.hr) || 0) + (parseInt(slot.irHr) || 0);
+    slot.hr       = (parseInt(slot.irHr) || 0) + replacementHR;
     delete slot.irPlayer;
     delete slot.irTeam;
     delete slot.irPosition;
