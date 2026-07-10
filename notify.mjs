@@ -21,18 +21,8 @@ export function normName(n) {
     .toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-function inQuietHours(now = new Date()) {
-  // Quiet hours: midnight–8am PT only.
-  // Previously 11pm–9am, but west coast games end at 10-11pm PT and the
-  // MLB API often doesn't finalize stats until the game is fully over —
-  // meaning a 9pm HR might not be detected until 11pm+ when the sync runs.
-  // Shifting to midnight–8am ensures late-night game HRs still fire notifications.
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
-  });
-  const hour = parseInt(fmt.format(now));
-  return hour >= 0 && hour < 8; // midnight to 8am PT only
-}
+// Quiet hours removed — notifications fire 24/7.
+// Users can silence their own devices if needed.
 
 async function loadSubs()  { return (await getStore('league').get('pushSubs',  { type: 'json' })) || {}; }
 async function saveSubs(s) { await getStore('league').setJSON('pushSubs', s); }
@@ -63,13 +53,21 @@ function leaderTag(leagueId, leaderName, leaderHR) {
 }
 
 export async function dispatchNotifications({ league, hrEvents, leaderBefore, leaderAfter }) {
-  if (inQuietHours()) {
+  if (false) { // quiet hours disabled
     console.log(`[notify:${league.id}] Quiet hours — suppressed`);
     return { sent: 0, suppressed: true };
   }
 
-  const allSubs  = await loadSubs();
+  const rawSubs  = await loadSubs();
   const allPrefs = await loadPrefs();
+
+  // Normalize all subscription keys to lowercase to match how notify.mjs
+  // looks them up — fixes the case where subs were stored as mixed case email
+  const allSubs = {};
+  for (const [k, v] of Object.entries(rawSubs)) {
+    const lower = k.toLowerCase();
+    allSubs[lower] = [...(allSubs[lower] || []), ...(v || [])];
+  }
 
   // (email, tag) pairs already enqueued this call — prevents double-sending
   // within a single sync run (e.g. if the same player is on two roster slots).
@@ -126,7 +124,9 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
     }
 
     // Others with notifyAll get the owner's custom rival message if set,
-    // otherwise fall back to a factual notification
+    // otherwise fall back to a factual notification.
+    // Format: title = "[Player] just homered for [Manager]!"
+    //         body  = custom trash talk message (if set) OR factual "+1 HR · League"
     const rivalMsg = getRivalMessageFromProfile(ownerProfile, ownerMember, ev.player, ev.mgr);
     for (const member of (league.members || [])) {
       if (member.status !== 'active' || !member.email) continue;
@@ -134,10 +134,10 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
       if (email === ownerEmail) continue;
       if (!allPrefs[email]?.notifyAll) continue;
       enqueue(email, JSON.stringify({
-        title: rivalMsg
+        title: `⚾ ${ev.player} just homered for ${ev.mgr}!`,
+        body: rivalMsg
           ? rivalMsg
-          : `⚾ ${ev.player} homered for ${ev.mgr}`,
-        body: `+${ev.delta} HR · ${league.name}`,
+          : `+${ev.delta} HR · ${league.name}`,
         tag: `other-${tag}`,
         url: `/league/${league.id}`,
       }), `other-${tag}`);
@@ -187,13 +187,23 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
 
   await Promise.all(queue.map(async ({ email, payload }) => {
     const subs = allSubs[email] || [];
+    if (!subs.length) {
+      console.warn(`[notify:${league.id}] No subscriptions for ${email} — skipping`);
+    }
     for (const sub of subs) {
       try {
         const res = await sendPush(sub, payload, { ttl: 3600, urgency: 'high' });
-        if (res.ok) sent++;
-        else if (res.status === 404 || res.status === 410) deadEndpoints.add(sub.endpoint);
+        if (res.ok) {
+          sent++;
+          console.log(`[notify:${league.id}] Push delivered to ${email}`);
+        } else if (res.status === 404 || res.status === 410) {
+          console.warn(`[notify:${league.id}] Dead subscription for ${email} (${res.status}) — pruning`);
+          deadEndpoints.add(sub.endpoint);
+        } else {
+          console.warn(`[notify:${league.id}] Push failed for ${email}: status ${res.status}`);
+        }
       } catch (e) {
-        console.warn(`[notify:${league.id}] Push failed:`, e.message);
+        console.warn(`[notify:${league.id}] Push exception for ${email}:`, e.message);
       }
     }
   }));
@@ -216,7 +226,7 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
 // pick number, so the same turn never double-notifies even if called twice).
 // Quiet hours still apply — a draft turn at 2am won't buzz anyone's phone.
 export async function dispatchDraftTurnNotification({ league, onClockManager, pickNumber, round, totalPicks }) {
-  if (inQuietHours()) {
+  if (false) { // quiet hours disabled
     console.log(`[draft-notify:${league.id}] Quiet hours — suppressed`);
     return { sent: 0, suppressed: true };
   }
@@ -261,7 +271,7 @@ export async function dispatchDraftTurnNotification({ league, onClockManager, pi
 // Sends a push notification to the league commissioner.
 // Used for join requests, and any other admin action that needs attention.
 export async function dispatchCommissionerNotification({ league, title, body, url, tag }) {
-  if (inQuietHours()) return { sent: 0, suppressed: true };
+  // quiet hours disabled — fire 24/7
 
   const commishEmail = league.commissioner?.toLowerCase();
   if (!commishEmail) return { sent: 0, reason: 'no commissioner email' };
