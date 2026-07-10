@@ -327,26 +327,34 @@ export async function runSyncForLeague(leagueId) {
     if (delta !== 0) {
       console.log(`[sync:${league.id}] HR delta detected for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
     }
-    if (delta !== 0) {
-      for (const mgr of league.managers) {
-        for (const slot of (league.months[key].rosters[mgr] || [])) {
-          if (slot.player && normName(slot.player) === nk) {
-            slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
-            logChange(league, slot.player, delta, mgr, key, 'sync');
-            if (delta > 0) {
-              added += delta;
-              hrEvents.push({
-                player:        slot.player,
-                delta,
-                mgr,
-                baselineAfter: r.seasonHR,   // used for stable notification tag
-              });
-            }
+
+    // Update all roster slots for this player
+    for (const mgr of league.managers) {
+      for (const slot of (league.months[key].rosters[mgr] || [])) {
+        if (!slot.player || normName(slot.player) !== nk) continue;
+
+        if (slot.manualHr !== undefined) {
+          // Manual HR was set by commissioner — ALWAYS use this value.
+          // Ignore delta entirely. Re-anchor baseline so future syncs are clean.
+          console.log(`[sync:${league.id}] Manual override for ${r.player}: keeping ${slot.manualHr} HR (ignoring delta ${delta})`);
+          slot.hr = slot.manualHr;
+          delete slot.manualHr;
+          delete slot.manualHrTs;
+          league.seasonBaseline[nk] = r.seasonHR;
+        } else if (delta !== 0) {
+          // Normal sync — apply delta
+          slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
+          logChange(league, slot.player, delta, mgr, key, 'sync');
+          if (delta > 0) {
+            added += delta;
+            hrEvents.push({ player: slot.player, delta, mgr, baselineAfter: r.seasonHR });
           }
         }
       }
-      league.seasonBaseline[nk] = r.seasonHR;
     }
+
+    // Update baseline after processing all slots for this player
+    league.seasonBaseline[nk] = r.seasonHR;
   }
 
   const leaderAfter = computeLeader(league);
