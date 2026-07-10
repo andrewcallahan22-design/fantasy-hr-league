@@ -1511,6 +1511,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
+const APP_VERSION = '202607101938'; // updated on every deploy
 let CURRENT_TAB = 'scoreboard';
 let _pollTimer = null;
 
@@ -1563,7 +1564,22 @@ function startLeaguePolling() {
   if (!window._visibilityListenerAttached) {
     window._visibilityListenerAttached = true;
     document.addEventListener('visibilitychange', async () => {
-      if (document.hidden || !CURRENT_LEAGUE) return;
+      if (document.hidden) return;
+
+      // Check for new app version — if index.html changed, reload silently.
+      // This ensures PWA users always get updates without manual refresh.
+      try {
+        const r = await fetch('/index.html', { cache: 'no-store' });
+        const text = await r.text();
+        const match = text.match(/APP_VERSION = '(\d+)'/);
+        if (match && match[1] !== APP_VERSION) {
+          console.log(`[update] New version detected (${APP_VERSION} → ${match[1]}), reloading…`);
+          location.reload();
+          return;
+        }
+      } catch {}
+
+      if (!CURRENT_LEAGUE) return;
       // Only re-fetch when actually on a league page
       if (!location.pathname.startsWith('/league/')) return;
       setTimeout(() => _fetchAndRenderLeague(), 300);

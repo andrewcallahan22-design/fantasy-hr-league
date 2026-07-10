@@ -2,6 +2,31 @@
   publish = "."
   functions = "netlify/functions"
 
+# Never cache index.html — always serve the latest version.
+# This is critical for a PWA where users have the app pinned to their home screen.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+    Pragma = "no-cache"
+
+# Never cache the service worker either
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Static assets (icons, manifest) can be cached
+[[headers]]
+  for = "/icon-*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "no-cache"
+
 # Route all /.netlify/functions/* calls to the functions directory
 [[redirects]]
   from = "/.netlify/functions/*"
@@ -14,7 +39,3 @@
   from = "/*"
   to = "/index.html"
   status = 200
-
-# Note: we use external cron (cron-job.org) hitting /run-sync?leagueId=...
-# to drive syncs every minute. Netlify free tier scheduled functions only
-# support hourly intervals, so they're disabled here in favor of the external job.
