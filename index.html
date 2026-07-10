@@ -915,7 +915,7 @@ async function renderRoute() {
   }
   const joinMatch = path.match(/^\/join\/([^/]+)\/?$/);
   if (joinMatch) return renderJoinPage(joinMatch[1]);
-  const leagueMatch = path.match(/^\/league\/([^/]+)(?:\/(draft|history|settings|edit|standings|my-settings))?\/?$/);
+  const leagueMatch = path.match(/^\/league\/([^/]+)(?:\/(draft|history|settings|edit|standings|my-settings|rules))?\/?$/);
   if (leagueMatch) return renderLeague(leagueMatch[1], leagueMatch[2] || 'scoreboard');
   return render404();
 }
@@ -4781,7 +4781,7 @@ function renderLeagueRules(body) {
     <div class="panel" style="margin-bottom:16px">
       <div class="panel-header" style="justify-content:space-between">
         <span>League Rules — ${escapeHtml(league.name)}</span>
-        ${isCommish ? `<a href="/league/${escapeAttr(league.id)}/settings" onclick="navigate('/league/${escapeAttr(league.id)}/settings');return false;" class="btn btn-sm btn-ghost" style="font-size:11px">✏ Edit rules</a>` : ''}
+        ${isCommish ? `<button onclick="navigate('/league/${escapeAttr(league.id)}/settings')" class="btn btn-sm btn-ghost" style="font-size:11px">✏ Edit rules</button>` : ''}
       </div>
       <div class="panel-body" style="padding:0">
         <table class="data-table">
