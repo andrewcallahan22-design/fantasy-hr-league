@@ -344,14 +344,17 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Only the commissioner can change settings' }, { status: 403 });
     }
     const allowedKeys = ['rosterSize','scoringCategories','positionsAllowed','positionRule','teamRule','multiPlayerPerTeam','redraftCadence','maxManagers','irSlots','irReplacementRule','waiverType'];
+    console.log('[settings] received:', JSON.stringify(body.settings));
+    console.log('[settings] before save irSlots:', league.settings?.irSlots);
     for (const key of allowedKeys) {
       if (body.settings && body.settings[key] !== undefined) {
         league.settings[key] = body.settings[key];
       }
     }
-    // Keep positions list in sync with allowed positions
+    console.log('[settings] after merge irSlots:', league.settings?.irSlots);
     if (body.settings?.positionsAllowed) league.positions = body.settings.positionsAllowed;
     await saveLeague(league);
+    console.log('[settings] saved successfully, irSlots:', league.settings?.irSlots);
     return Response.json({ ok: true, settings: league.settings }, { headers: NO_CACHE });
   }
 
@@ -398,18 +401,24 @@ export default async (req) => {
       if (!slot) continue;
 
       if (edit.field === 'hr') {
-        const before = parseInt(slot.hr) || 0;
         const newVal = Math.max(0, parseInt(edit.value) || 0);
+        const before = parseInt(slot.hr) || 0;
+        slot.hr = newVal;
+        // Store manualHr directly on the slot — the sync reads this and
+        // uses it as an absolute floor, ignoring the baseline entirely.
+        // This survives any race condition between save and sync.
+        slot.manualHr = newVal;
+        slot.manualHrTs = Date.now();
         if (before !== newVal) {
-          slot.hr = newVal;
           if (!league.changeLog) league.changeLog = [];
           league.changeLog.push({ t: Date.now(), player: slot.player || '?', delta: newVal - before, mgr: targetMgr, month: cm, src: 'manual' });
           if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
-          // Move baseline so next sync doesn't re-add the same HRs
-          const nk = normName(slot.player || '');
-          if (nk && league.seasonHints?.[nk] !== undefined && league.seasonBaseline?.[nk] !== undefined) {
-            league.seasonBaseline[nk] = league.seasonHints[nk] - newVal;
-          }
+        }
+        // Also update baseline as belt-and-suspenders
+        const nk = normName(slot.player || '');
+        if (nk && league.seasonHints?.[nk] !== undefined) {
+          if (!league.seasonBaseline) league.seasonBaseline = {};
+          league.seasonBaseline[nk] = league.seasonHints[nk];
         }
       } else if (['player','team','position'].includes(edit.field)) {
         slot[edit.field] = String(edit.value || '');

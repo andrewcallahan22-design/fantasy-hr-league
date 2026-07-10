@@ -289,36 +289,43 @@ export async function runSyncForLeague(leagueId) {
     league.nextGame[nk]    = r.nextGame;
 
     const baseline = league.seasonBaseline[nk];
+
+    // Set baseline if first time seeing this player
     if (baseline === undefined) {
-      // First time seeing this player — set baseline, no notification
-      console.log(`[sync:${league.id}] Baseline set for ${r.player}: ${r.seasonHR} HR`);
       league.seasonBaseline[nk] = r.seasonHR;
-      continue;
     }
-    const delta = r.seasonHR - baseline;
+
+    const delta = baseline !== undefined ? r.seasonHR - baseline : 0;
     if (delta !== 0) {
-      console.log(`[sync:${league.id}] HR delta detected for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
+      console.log(`[sync:${league.id}] HR delta for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
     }
-    if (delta !== 0) {
-      for (const mgr of league.managers) {
-        for (const slot of (league.months[key].rosters[mgr] || [])) {
-          if (slot.player && normName(slot.player) === nk) {
-            slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
-            logChange(league, slot.player, delta, mgr, key, 'sync');
-            if (delta > 0) {
-              added += delta;
-              hrEvents.push({
-                player:        slot.player,
-                delta,
-                mgr,
-                baselineAfter: r.seasonHR,   // used for stable notification tag
-              });
-            }
-          }
+
+    // Update roster slots — manualHr ALWAYS wins regardless of delta or baseline state
+    for (const mgr of league.managers) {
+      for (const slot of (league.months[key].rosters[mgr] || [])) {
+        if (!slot.player || normName(slot.player) !== nk) continue;
+
+        if (slot.manualHr !== undefined) {
+          // Commissioner set this manually — use exact value, ignore everything else
+          console.log(`[sync:${league.id}] Respecting manual HR for ${r.player}: ${slot.manualHr} (delta was ${delta})`);
+          slot.hr = slot.manualHr;
+          delete slot.manualHr;
+          delete slot.manualHrTs;
+        } else if (delta > 0) {
+          // Real new HR detected by sync
+          slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
+          logChange(league, slot.player, delta, mgr, key, 'sync');
+          added += delta;
+          hrEvents.push({ player: slot.player, delta, mgr, baselineAfter: r.seasonHR });
+        } else if (delta < 0) {
+          // Correction (rare) — MLB API revised down
+          slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
         }
       }
-      league.seasonBaseline[nk] = r.seasonHR;
     }
+
+    // Always update baseline to current season total
+    league.seasonBaseline[nk] = r.seasonHR;
   }
 
   const leaderAfter = computeLeader(league);
