@@ -2321,6 +2321,10 @@ function monthSortKey(key) {
 
 
 function renderRostersEdit(body) {
+  if (!body || typeof body.innerHTML === 'undefined') {
+    body = document.getElementById('tab-body');
+  }
+  if (!body) return;
   const { league, isCommish, myManager } = CURRENT_LEAGUE;
   const isAdmin    = SESSION?.isAdmin;
   const irSlots    = parseInt(league.settings?.irSlots) || 0;
@@ -2333,8 +2337,8 @@ function renderRostersEdit(body) {
   const currentMonth = league.currentMonth;
 
   // Which manager to show — own roster by default, commissioner can pick any
-  const viewMgr = body._viewMgr || myManager || (isCommish || isAdmin ? league.managers[0] : null);
-  const viewMonth = body._viewMonth || currentMonth;
+  const viewMgr = _rosterViewMgr || myManager || (isCommish || isAdmin ? league.managers[0] : null);
+  const viewMonth = _rosterViewMonth || currentMonth;
 
   if (!viewMgr) {
     body.innerHTML = `<div class="notice info">You don't have a roster in this league yet. You'll need to be approved and complete the draft first.</div>`;
@@ -2509,13 +2513,18 @@ function renderRostersEdit(body) {
   }
 
   body.innerHTML = html;
-  body._viewMgr = viewMgr;
-  body._viewMonth = viewMonth;
+  _rosterViewMgr = viewMgr;
+  _rosterViewMonth = viewMonth;
 }
 
 function renderRostersWithOptions(body, mgr, month) {
-  body._viewMgr = mgr;
-  body._viewMonth = month;
+  // Guard: if body isn't a valid DOM element, fall back to tab-body
+  if (!body || typeof body.innerHTML === 'undefined') {
+    body = document.getElementById('tab-body');
+  }
+  if (!body) return;
+  _rosterViewMgr = mgr;
+  _rosterViewMonth = month;
   renderRostersEdit(body);
 }
 
@@ -2831,7 +2840,7 @@ async function submitWaiverClaim(mgr, slotIndex) {
   renderActiveTab();
 }
 async function editSlot(manager, slotIndex, field, value) {
-  const viewMonth = document.getElementById('tab-body')?._viewMonth || CURRENT_LEAGUE.league.currentMonth;
+  const viewMonth = _rosterViewMonth || CURRENT_LEAGUE.league.currentMonth;
   setSyncUI('loading', 'Saving…');
   try {
     const r = await fetch(API_LEAGUE, {
@@ -2906,6 +2915,8 @@ let _draftRosterMgr = null;
 // Per-league queue stored in localStorage — personal to each manager's device.
 // Auto-purges drafted players on every render.
 let _draftQueue = [];
+let _rosterViewMgr = null;   // persists across re-renders
+let _rosterViewMonth = null; // persists across re-renders
 
 function loadDraftQueue(leagueId) {
   try {
