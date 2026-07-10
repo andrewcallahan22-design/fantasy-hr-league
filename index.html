@@ -3373,18 +3373,16 @@ function renderDraftRoom(body) {
 
         <!-- Player pool table -->
         <div class="panel">
-          <div class="panel-body" id="draft-pool-scroll-container" style="padding:0;overflow-x:auto;max-height:calc(100vh - 280px);overflow-y:auto">
-            <table class="data-table" style="min-width:500px">
+          <div class="panel-body" id="draft-pool-scroll-container" style="padding:0;max-height:calc(100vh - 280px);overflow-y:auto">
+            <table class="data-table" style="table-layout:fixed;width:100%">
               <thead style="position:sticky;top:0;z-index:2;background:var(--panel-solid)">
                 <tr>
-                  <th style="width:32px">#</th>
+                  <th style="width:28px">#</th>
                   <th>Player</th>
-                  <th style="width:44px">Team</th>
-                  <th style="width:36px">Pos</th>
-                  <th class="right" style="width:52px">Ssn HR</th>
-                  <th class="right" style="width:52px">${escapeHtml((d.draft?.basedOn || 'Prev').split('-')[0])} HR</th>
-                  <th style="width:60px">Health</th>
-                  <th style="width:70px"></th>
+                  <th class="right" style="width:48px">Ssn</th>
+                  <th class="right" style="width:44px">${escapeHtml((d.draft?.basedOn || 'Prev').split('-')[0])}</th>
+                  <th style="width:56px">Health</th>
+                  <th style="width:80px"></th>
                 </tr>
               </thead>
               <tbody id="draft-pool-body">
@@ -3518,14 +3516,19 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
       : '';
 
     return `<tr style="${rowStyle}">
-      <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint)">${p.rank || i + 1}</td>
-      <td style="font-weight:600;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        <button data-player="${escapeAttr(p.name)}" data-mlbid="${p.id || ''}" onclick="openPlayerProfile(this.dataset.player, this.dataset.mlbid||null)" style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)}</button>
+      <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:28px">${p.rank || i + 1}</td>
+      <td>
+        <button data-player="${escapeAttr(p.name)}" data-mlbid="${p.id || ''}" onclick="openPlayerProfile(this.dataset.player, this.dataset.mlbid||null)"
+          style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px">
+          ${escapeHtml(p.name)}
+        </button>
+        <div style="display:flex;gap:3px;margin-top:2px">
+          <span class="team-chip" style="font-size:9px;${isTeamTaken ? 'text-decoration:line-through;opacity:0.5' : ''}">${escapeHtml(p.team)}</span>
+          <span class="pos-chip" style="font-size:9px;${posBlocked ? 'background:rgba(239,68,68,0.15);color:var(--red)' : ''}">${escapeHtml(p.pos)}</span>
+        </div>
       </td>
-      <td><span class="team-chip" style="font-size:9px;${isTeamTaken ? 'text-decoration:line-through;opacity:0.5' : ''}">${escapeHtml(p.team)}</span></td>
-      <td><span class="pos-chip" style="font-size:9px;${posBlocked ? 'background:rgba(239,68,68,0.15);color:var(--red)' : ''}">${escapeHtml(p.pos)}</span></td>
-      <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600">${p.hr}</td>
-      <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-muted)">${p.prevHR || '—'}</td>
+      <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600;font-size:13px">${p.hr}</td>
+      <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-muted);font-size:12px">${p.prevHR || '—'}</td>
       <td style="font-size:10px;color:${healthColor}">${escapeHtml(p.health)}</td>
       <td style="text-align:center;white-space:nowrap">${queueBtn} ${actionCell}</td>
     </tr>`;
