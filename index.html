@@ -2575,30 +2575,39 @@ function openWaiverClaim(mgr, slotIndex) {
     }
   }
 
-  // Compute which positions are already at their limit on THIS manager's roster
-  // so we can block those positions in the player picker
+  // For IR replacement, the injured player still "holds" their position logically.
+  // We only block positions that are STRICTLY OVER the limit —
+  // meaning adding another player there would create a violation.
+  // Since Buxton holds CF, the slot is open but CF is still accounted for,
+  // so we don't subtract the slot position — we just check what's over limit.
   const myRoster = month?.rosters?.[mgr] || [];
   const posCounts = {};
   for (const p of myRoster) {
-    // Count both active and IR player positions (IR player stays on roster logically)
     const pos = p.irPlayer ? p.irPosition : p.position;
     if (pos) posCounts[pos] = (posCounts[pos] || 0) + 1;
   }
-  // The slot being filled is open — don't count it
-  const slotPos = slot?.irPlayer ? slot.irPosition : slot?.position;
-  if (slotPos && posCounts[slotPos] > 0) posCounts[slotPos]--;
 
   const maxPerPos = positionRule === 'all-unique' ? 1
     : positionRule === 'unrestricted' ? Infinity
     : 2; // one-duplicate-allowed
 
+  // Only block positions that are already AT or OVER the limit
+  // AND where adding another player would actually violate the rule
+  // For the open IR slot itself, don't count it as filled
+  const openSlotPos = slot?.irPlayer ? slot.irPosition : null;
   const blockedPositions = new Set(
     Object.entries(posCounts)
-      .filter(([, count]) => count >= maxPerPos)
+      .filter(([pos, count]) => {
+        // The open slot position doesn't count toward blocking since the
+        // replacement fills that same logical slot
+        const effectiveCount = pos === openSlotPos ? count - 1 : count;
+        return effectiveCount >= maxPerPos;
+      })
       .map(([pos]) => pos)
   );
 
   _waiverSelected = null;
+  window._waiverPositionRule = positionRule; // for error messages
 
   const wrap = document.createElement('div');
   wrap.className = 'modal-overlay open';
@@ -2731,9 +2740,11 @@ function renderWaiverPool() {
   if (countEl) countEl.textContent = `${filtered.length} available`;
 
   if (!filtered.length) {
+    const blockedMsg = _waiverBlockedPositions.size
+      ? `<p style="font-size:12px;color:var(--orange);margin-top:8px">Positions at limit on your roster: ${[..._waiverBlockedPositions].join(', ')}.<br>You can only pick up players at positions you don't already have (${window._waiverPositionRule === 'all-unique' ? 'all-unique rule' : 'one-duplicate-allowed rule'}).<br><strong>Tip: Change your league's Position Rule in Commissioner → Settings to allow more flexibility.</strong></p>`
+      : '';
     el.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">
-      No eligible players found.<br>
-      <span style="font-size:11px;color:var(--text-faint)">They may all be on rosters or at a blocked position.</span>
+      No eligible players found.${blockedMsg}
     </div>`;
     return;
   }
