@@ -93,17 +93,37 @@ export default async (req) => {
     if (!userSubs.length) {
       return Response.json({ ok: false, error: `No push subscriptions found for ${email}. Try turning notifications off and back on in ⚙ Settings.` });
     }
+
+    // Send two test notifications — one showing "your player" format,
+    // one showing "rival's player" format with a sample trash talk message.
+    // This lets you see exactly what real HR notifications look like.
+    const testPayloads = [
+      {
+        title: '🚀 +1 HR · Your team!',
+        body: 'Aaron Judge goes yard! 💣 The Ghost of Peavy',
+        url: '/',
+        tag: 'go-yard-test-own',
+      },
+      {
+        title: '⚾ +1 HR · Max\'s team',
+        body: 'Kyle Schwarber — 💣 Tell your friends they\'re losing',
+        url: '/',
+        tag: 'go-yard-test-rival',
+      },
+    ];
+
     let sent = 0;
     const dead = [];
-    for (const sub of userSubs) {
-      const res = await sendPush(sub, JSON.stringify({
-        title: '⚾ Go Yard test notification',
-        body: `Push is working for ${email}! You'll get notified on every HR.`,
-        url: '/',
-      }), { ttl: 60, urgency: 'high' });
-      if (res.ok) sent++;
-      else if (res.status === 404 || res.status === 410) dead.push(sub.endpoint);
-      else console.warn(`[push:test] delivery failed status=${res.status} for ${email}`);
+    for (const payload of testPayloads) {
+      for (const sub of userSubs) {
+        const res = await sendPush(sub, JSON.stringify(payload), { ttl: 60, urgency: 'high' });
+        if (res.ok) sent++;
+        else if (res.status === 404 || res.status === 410) {
+          if (!dead.includes(sub.endpoint)) dead.push(sub.endpoint);
+        } else {
+          console.warn(`[push:test] delivery failed status=${res.status} for ${email}`);
+        }
+      }
     }
     if (dead.length) {
       subs[email] = userSubs.filter(s => !dead.includes(s.endpoint));

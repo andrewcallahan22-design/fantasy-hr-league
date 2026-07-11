@@ -2057,6 +2057,7 @@ function renderScoreboard(body) {
   const liveLabel = rostersLiveAt
     ? `Rosters live since ${new Date(rostersLiveAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
     : (league.draft ? 'Draft in progress — HR tracking starts when draft closes' : 'HR tracking active');
+  const hrCarryover = league.settings?.irHrCarryover || 'keep';
 
   html += `
     <div style="margin-bottom:12px;padding:10px 14px;background:rgba(240,199,94,0.06);border:1px solid rgba(240,199,94,0.15);border-radius:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
@@ -4770,9 +4771,10 @@ async function renderNotificationsPanelInto(elementId) {
         </div>
       </label>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-sm btn-ghost" onclick="sendTestNotification('${elementId}')">🔔 Send test notification</button>
+        <button class="btn btn-sm btn-ghost" onclick="sendTestNotification('${elementId}')">🔔 Send 2 test notifications</button>
         <div id="test-notif-result-${elementId}" style="font-size:12px;color:var(--text-muted)"></div>
       </div>
+      <div class="input-help" style="margin-top:4px">Sends one "your player" and one "rival's player" notification so you can see both formats on your device.</div>
     ` : `
       <p class="input-help">Each device subscribes separately. Enable on your phone AND your laptop if you want both.</p>
     `}
@@ -4803,7 +4805,7 @@ async function sendTestNotification(elementId) {
       return;
     }
     if (res.sent > 0) {
-      if (resultEl) { resultEl.textContent = `✓ Sent to ${res.sent} device(s) — check for a notification!`; resultEl.style.color = 'var(--green)'; }
+      if (resultEl) { resultEl.textContent = `✓ Sent ${res.sent} test notification(s) — check your phone for both formats!`; resultEl.style.color = 'var(--green)'; }
     } else {
       if (resultEl) { resultEl.textContent = `❌ 0 delivered (${res.dead} dead subscription(s) pruned — try disabling and re-enabling notifications)`; resultEl.style.color = 'var(--orange)'; }
     }
