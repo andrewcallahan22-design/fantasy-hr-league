@@ -33,11 +33,11 @@ function emailForManager(league, mgr) {
   return m?.email?.toLowerCase() || null;
 }
 
-// Stable tag for an HR event — does NOT include timestamp so browser/OS can
-// deduplicate: if the same notification arrives twice it replaces the first
-// rather than stacking.
-// Format: hr-{leagueId}-{playerNorm}-{newSeasonTotal}
-// The newSeasonTotal is the season HR count AFTER the delta. We derive it
+// Stable tag for an HR event — does NOT include leagueId or timestamp.
+// This means if the same player HR fires from multiple leagues, the browser/OS
+// deduplicates and only shows ONE notification — the most recent replaces any prior.
+// Format: hr-{playerNorm}-{newSeasonTotal}
+// The newSeasonTotal is the season HR count AFTER the delta.
 // from ev.baselineAfter passed in by core.mjs, or fall back to a rough
 // minute-bucket to limit the window.
 function hrTag(leagueId, ev) {
@@ -45,7 +45,9 @@ function hrTag(leagueId, ev) {
   const bucket = ev.baselineAfter !== undefined
     ? String(ev.baselineAfter)
     : String(Math.floor(Date.now() / 60000)); // 1-minute bucket fallback
-  return `hr-${leagueId}-${norm}-${bucket}`;
+  // No leagueId in tag — same player HR in multiple leagues generates one notification
+  // The browser/OS replaces duplicates with the same tag rather than stacking them
+  return `hr-${norm}-${bucket}`;
 }
 
 function leaderTag(leagueId, leaderName, leaderHR) {

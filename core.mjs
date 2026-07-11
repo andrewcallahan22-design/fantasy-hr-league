@@ -104,13 +104,21 @@ async function fetchGameLogStats(league, playerName, season) {
     if (date >= cutoff3d) last24h += hr;
   }
 
-  // Add today's live HRs if the game log doesn't already include today
-  // (i.e. the game is still in progress and not yet finalized)
-  if (!countedDates.has(today) && todayHR > 0) {
-    console.log(`[sync] Live HR detected for ${playerName}: ${todayHR} HR today (not yet in game log)`);
-    seasonHR += todayHR;
-    last7    += todayHR;
-    last24h  += todayHR;
+  // Add today's live HRs only if the game log's count for today is LESS than
+  // what the today-specific endpoint shows (game still finalizing) 
+  if (todayHR > 0) {
+    // Find today's HR count in the game log
+    const todayInLog = splits
+      .filter(s => s.date === today)
+      .reduce((sum, s) => sum + (parseInt(s?.stat?.homeRuns) || 0), 0);
+    if (!countedDates.has(today)) {
+      // Today not in game log at all — game in progress, add live HR
+      console.log(`[sync] Live HR detected for ${playerName}: ${todayHR} HR today (not yet in game log)`);
+      seasonHR += todayHR;
+      last7    += todayHR;
+      last24h  += todayHR;
+    }
+    // If today IS in game log, don't add again — game log is authoritative
   }
 
   return { last7, last24h, seasonHR };
@@ -230,6 +238,31 @@ export async function runSyncForLeague(leagueId) {
   const league = await loadLeague(leagueId);
   if (!league) return { ok: false, error: 'League not found' };
 
+  // ── Sync lock ──
+  // Prevent overlapping syncs from causing duplicate notifications.
+  // If a sync started less than 50s ago, skip this run.
+  const now = Date.now();
+  if (league.lastSyncStartedAt && (now - league.lastSyncStartedAt) < 50000) {
+    console.log(`[sync:${leagueId}] Skipping — sync already in progress (started ${Math.round((now - league.lastSyncStartedAt)/1000)}s ago)`);
+    return { ok: true, skipped: true };
+  }
+  league.lastSyncStartedAt = now;
+  await saveLeague(league); // write lock immediately
+
+  // Auto-clear stale draft objects — if draft exists but status isn't 'active',
+  // it's leftover data that causes the "Draft in progress" banner to show incorrectly.
+  if (league.draft && league.draft.status !== 'active') {
+    console.log(`[sync:${leagueId}] Clearing stale draft object (status: ${league.draft.status})`);
+    league.draft = null;
+    if (!league.draftClosedAt) {
+      league.draftClosedAt = Date.now();
+      if (league.currentMonth && league.months?.[league.currentMonth]) {
+        league.months[league.currentMonth].rostersLiveAt = league.draftClosedAt;
+      }
+    }
+    await saveLeague(league);
+  }
+
   const key = league.currentMonth;
   if (!key || !league.months?.[key]) return { ok: false, error: 'No active month' };
   if (!league.seasonBaseline) league.seasonBaseline = {};
@@ -289,76 +322,48 @@ export async function runSyncForLeague(leagueId) {
     league.nextGame[nk]    = r.nextGame;
 
     const baseline = league.seasonBaseline[nk];
+
+    // Set baseline if first time seeing this player
     if (baseline === undefined) {
-      // First time seeing this player — set baseline, no notification
-      console.log(`[sync:${league.id}] Baseline set for ${r.player}: ${r.seasonHR} HR`);
       league.seasonBaseline[nk] = r.seasonHR;
-      // If there's a manual override waiting, apply it now and anchor baseline
-      if (league.manualHrOverrides?.[nk]) {
-        const override = league.manualHrOverrides[nk];
-        for (const mgr of league.managers) {
-          for (const slot of (league.months[key].rosters[mgr] || [])) {
-            if (slot.player && normName(slot.player) === nk) {
-              slot.hr = override.hr;
-            }
-          }
-        }
-        delete league.manualHrOverrides[nk];
-        console.log(`[sync:${league.id}] Applied manual override for ${r.player}: ${override.hr} HR`);
-      }
-      continue;
-    }
-    // If there's a pending manual override, apply it and anchor baseline
-    if (league.manualHrOverrides?.[nk]) {
-      const override = league.manualHrOverrides[nk];
-      for (const mgr of league.managers) {
-        for (const slot of (league.months[key].rosters[mgr] || [])) {
-          if (slot.player && normName(slot.player) === nk) {
-            slot.hr = override.hr;
-          }
-        }
-      }
-      league.seasonBaseline[nk] = r.seasonHR; // anchor so next delta is from here
-      delete league.manualHrOverrides[nk];
-      console.log(`[sync:${league.id}] Applied manual override for ${r.player}: ${override.hr} HR, baseline=${r.seasonHR}`);
-      continue; // skip normal delta processing
-    }
-    const delta = r.seasonHR - baseline;
-    if (delta !== 0) {
-      console.log(`[sync:${league.id}] HR delta detected for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
     }
 
-    // Update all roster slots for this player
+    const delta = baseline !== undefined ? r.seasonHR - baseline : 0;
+    if (delta !== 0) {
+      console.log(`[sync:${league.id}] HR delta for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
+    }
+
+    // Update roster slots — manualHr ALWAYS wins regardless of delta or baseline state
     for (const mgr of league.managers) {
       for (const slot of (league.months[key].rosters[mgr] || [])) {
         if (!slot.player || normName(slot.player) !== nk) continue;
 
         if (slot.manualHr !== undefined) {
-          // Manual HR was set by commissioner — ALWAYS use this value.
-          // Ignore delta entirely. Re-anchor baseline so future syncs are clean.
-          console.log(`[sync:${league.id}] Manual override for ${r.player}: keeping ${slot.manualHr} HR (ignoring delta ${delta})`);
+          // Commissioner set this manually — use exact value, ignore everything else
+          console.log(`[sync:${league.id}] Respecting manual HR for ${r.player}: ${slot.manualHr} (delta was ${delta})`);
           slot.hr = slot.manualHr;
           delete slot.manualHr;
           delete slot.manualHrTs;
-          league.seasonBaseline[nk] = r.seasonHR;
-        } else if (delta !== 0) {
-          // Normal sync — apply delta
+        } else if (delta > 0) {
+          // Real new HR detected by sync
           slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
           logChange(league, slot.player, delta, mgr, key, 'sync');
-          if (delta > 0) {
-            added += delta;
-            hrEvents.push({ player: slot.player, delta, mgr, baselineAfter: r.seasonHR });
-          }
+          added += delta;
+          hrEvents.push({ player: slot.player, delta, mgr, baselineAfter: r.seasonHR });
+        } else if (delta < 0) {
+          // Correction (rare) — MLB API revised down
+          slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
         }
       }
     }
 
-    // Update baseline after processing all slots for this player
+    // Always update baseline to current season total
     league.seasonBaseline[nk] = r.seasonHR;
   }
 
   const leaderAfter = computeLeader(league);
   league.lastSync = Date.now();
+  delete league.lastSyncStartedAt; // release lock
   await saveLeague(league);
 
   // Dispatch notifications — fire-and-forget
