@@ -1550,7 +1550,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607111606'; // updated on every deploy
+const APP_VERSION = '202607111625'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -2065,12 +2065,6 @@ function renderScoreboard(body) {
     : (league.draft?.status === 'active' ? 'Draft in progress — HR tracking starts when draft closes' : 'HR tracking active');
   const hrCarryover = league.settings?.irHrCarryover || 'keep';
 
-  html += `
-    <div style="margin-bottom:12px;padding:10px 14px;background:rgba(240,199,94,0.06);border:1px solid rgba(240,199,94,0.15);border-radius:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
-      <span style="font-size:12px;color:var(--text-muted)">📅 ${escapeHtml(liveLabel)}</span>
-      ${league.draft?.status === 'active' ? '<span style="font-size:11px;color:var(--accent);font-weight:600">⏳ Draft in progress</span>' : ''}
-    </div>
-  `;
   for (const mgr of league.managers) {
     const roster = month.rosters[mgr] || [];
     // Total includes swapped-out player HRs if carryover is 'keep'
@@ -3414,6 +3408,10 @@ function renderDraftRoom(body) {
       return keys[keys.length - 1] || league.currentMonth;
     })();
 
+    const lastDraftDate = league.draftClosedAt
+      ? `Last draft completed ${new Date(league.draftClosedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+      : null;
+
     // Season-long totals — worst picks first
     const standings = (league.managers || []).map(m => ({
       mgr: m,
@@ -3425,6 +3423,7 @@ function renderDraftRoom(body) {
     body.innerHTML = `
       <div style="max-width:700px">
         ${isCommish ? `
+          ${lastDraftDate ? `<div style="margin-bottom:12px;font-size:12px;color:var(--text-muted)">📅 ${escapeHtml(lastDraftDate)}</div>` : ''}
           <div class="panel">
             <div class="panel-header">Open the Draft</div>
             <div class="panel-body">
@@ -3465,6 +3464,7 @@ function renderDraftRoom(body) {
             </div>
           </div>
         ` : `
+          ${lastDraftDate ? `<div style="margin-bottom:12px;font-size:12px;color:var(--text-muted)">📅 ${escapeHtml(lastDraftDate)}</div>` : ''}
           <div class="empty-state">
             <div class="empty-state-title">Draft not open yet</div>
             <div class="empty-state-body">The commissioner hasn't opened the draft for next month. Check back soon.</div>
@@ -3477,9 +3477,13 @@ function renderDraftRoom(body) {
 
   // ── Draft complete ──
   if (d.draft.status === 'complete') {
+    const lastDraftDate = league.draftClosedAt
+      ? new Date(league.draftClosedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : null;
     body.innerHTML = `
       <div class="notice success" style="margin-bottom:16px">
         ✓ Draft complete — rosters for <strong>${escapeHtml(d.draft.month)}</strong> have been set.
+        ${lastDraftDate ? `<span style="font-size:12px;color:var(--text-muted);margin-left:12px">Completed ${escapeHtml(lastDraftDate)}</span>` : ''}
         ${isCommish ? `<button class="btn btn-sm btn-ghost" style="margin-left:12px" onclick="resetDraft('${escapeAttr(league.id)}')">Reset draft</button>` : ''}
       </div>
       ${renderDraftLog(d.draft, league.managers)}
