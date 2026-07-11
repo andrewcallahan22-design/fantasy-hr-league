@@ -21,18 +21,8 @@ export function normName(n) {
     .toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-function inQuietHours(now = new Date()) {
-  // Quiet hours: midnight–8am PT only.
-  // Previously 11pm–9am, but west coast games end at 10-11pm PT and the
-  // MLB API often doesn't finalize stats until the game is fully over —
-  // meaning a 9pm HR might not be detected until 11pm+ when the sync runs.
-  // Shifting to midnight–8am ensures late-night game HRs still fire notifications.
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
-  });
-  const hour = parseInt(fmt.format(now));
-  return hour >= 0 && hour < 8; // midnight to 8am PT only
-}
+// Quiet hours removed — notifications fire 24/7.
+// Users can silence their own devices if needed.
 
 async function loadSubs()  { return (await getStore('league').get('pushSubs',  { type: 'json' })) || {}; }
 async function saveSubs(s) { await getStore('league').setJSON('pushSubs', s); }
@@ -63,7 +53,7 @@ function leaderTag(leagueId, leaderName, leaderHR) {
 }
 
 export async function dispatchNotifications({ league, hrEvents, leaderBefore, leaderAfter }) {
-  if (inQuietHours()) {
+  if (false) { // quiet hours disabled
     console.log(`[notify:${league.id}] Quiet hours — suppressed`);
     return { sent: 0, suppressed: true };
   }
@@ -236,7 +226,7 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
 // pick number, so the same turn never double-notifies even if called twice).
 // Quiet hours still apply — a draft turn at 2am won't buzz anyone's phone.
 export async function dispatchDraftTurnNotification({ league, onClockManager, pickNumber, round, totalPicks }) {
-  if (inQuietHours()) {
+  if (false) { // quiet hours disabled
     console.log(`[draft-notify:${league.id}] Quiet hours — suppressed`);
     return { sent: 0, suppressed: true };
   }
@@ -281,7 +271,7 @@ export async function dispatchDraftTurnNotification({ league, onClockManager, pi
 // Sends a push notification to the league commissioner.
 // Used for join requests, and any other admin action that needs attention.
 export async function dispatchCommissionerNotification({ league, title, body, url, tag }) {
-  if (inQuietHours()) return { sent: 0, suppressed: true };
+  // quiet hours disabled — fire 24/7
 
   const commishEmail = league.commissioner?.toLowerCase();
   if (!commishEmail) return { sent: 0, reason: 'no commissioner email' };

@@ -562,6 +562,10 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Only the commissioner can close the draft' }, { status: 403 });
     }
     league.draft = null;
+    // Record when the draft closed so the scoreboard can show "Rosters live since X"
+    league.draftClosedAt = Date.now();
+    league.months[league.currentMonth] = league.months[league.currentMonth] || {};
+    league.months[league.currentMonth].rostersLiveAt = Date.now();
     await saveLeague(league);
     return Response.json({ ok: true });
   }

@@ -343,7 +343,7 @@ export default async (req) => {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {
       return Response.json({ ok: false, error: 'Only the commissioner can change settings' }, { status: 403 });
     }
-    const allowedKeys = ['rosterSize','scoringCategories','positionsAllowed','positionRule','teamRule','multiPlayerPerTeam','redraftCadence','maxManagers','irSlots','irReplacementRule','waiverType'];
+    const allowedKeys = ['rosterSize','scoringCategories','positionsAllowed','positionRule','teamRule','multiPlayerPerTeam','redraftCadence','maxManagers','irSlots','irMode','irHrCarryover','irReplacementRule','waiverType'];
     console.log('[settings] received:', JSON.stringify(body.settings));
     console.log('[settings] before save irSlots:', league.settings?.irSlots);
     for (const key of allowedKeys) {
@@ -561,16 +561,49 @@ export default async (req) => {
       return Response.json({ ok: false, error: `You've used all ${irSlots} IR slot(s)` }, { status: 400 });
     }
 
-    // Move player to IR — preserve their HR count, open slot for replacement
-    slot.irPlayer   = slot.player;
-    slot.irTeam     = slot.team;
-    slot.irPosition = slot.position;
-    slot.irHr       = parseInt(slot.hr) || 0; // save pre-injury HRs
-    slot.irMovedAt  = Date.now();
-    slot.player     = '';  // open for replacement pickup
-    slot.team       = '';
-    slot.position   = '';
-    slot.hr         = 0;   // replacement player starts fresh at 0
+    const irMode       = league.settings?.irMode || 'hold';
+    const hrCarryover  = league.settings?.irHrCarryover || 'keep';
+
+    // Save the transaction log entry regardless of mode
+    if (!league.irTransactions) league.irTransactions = [];
+    league.irTransactions.push({
+      t:        Date.now(),
+      mgr:      mgr,
+      player:   slot.player,
+      team:     slot.team,
+      position: slot.position,
+      hrAtTime: parseInt(slot.hr) || 0,
+      action:   'move-to-ir',
+      month:    cm,
+    });
+
+    if (irMode === 'swap') {
+      // Permanent swap mode — remove injured player from roster entirely.
+      // The slot stays open for the replacement to fill as a normal starter.
+      slot.swappedOut = slot.player;
+      slot.swappedOutTeam = slot.team;
+      slot.swappedOutPosition = slot.position;
+      slot.swappedOutHr = parseInt(slot.hr) || 0;
+      slot.swappedOutAt = Date.now();
+      // Clear the starter slot
+      slot.player = '';
+      slot.team = '';
+      slot.position = '';
+      // HR carryover: keep irHr on slot so it adds to total, or zero it out
+      slot.hrFromSwapped = hrCarryover === 'keep' ? (parseInt(slot.hr) || 0) : 0;
+      slot.hr = 0; // replacement starts fresh
+    } else {
+      // True IR mode — hold the player in an IR slot at the bottom
+      slot.irPlayer   = slot.player;
+      slot.irTeam     = slot.team;
+      slot.irPosition = slot.position;
+      slot.irHr       = hrCarryover === 'keep' ? (parseInt(slot.hr) || 0) : 0;
+      slot.irMovedAt  = Date.now();
+      slot.player     = '';
+      slot.team       = '';
+      slot.position   = '';
+      slot.hr         = 0;
+    }
 
     await saveLeague(league);
     return Response.json({ ok: true }, { headers: NO_CACHE });
@@ -592,12 +625,25 @@ export default async (req) => {
     const slot = roster[slotIdx];
     if (!slot?.irPlayer) return Response.json({ ok: false, error: 'No IR player in that slot' }, { status: 400 });
 
-    // Restore original player — replacement player HRs stay counted via slot.hr
-    slot.player = slot.irPlayer;
-    slot.team = slot.irTeam;
+    // Save a record of what the replacement did before returning IR player
+    const replacementHR = parseInt(slot.hr) || 0;
+    const replacementPlayer = slot.player || null;
+    slot.irHistory = slot.irHistory || [];
+    if (replacementPlayer) {
+      slot.irHistory.push({
+        replacement: replacementPlayer,
+        replacementTeam: slot.team,
+        replacementHR,
+        irStart: slot.irMovedAt,
+        irEnd: Date.now(),
+      });
+    }
+
+    // Restore original player — combined HRs = pre-injury + replacement
+    slot.player   = slot.irPlayer;
+    slot.team     = slot.irTeam;
     slot.position = slot.irPosition;
-    // Total HRs = replacement HRs (slot.hr) + original player IR HRs (slot.irHr)
-    slot.hr = (parseInt(slot.hr) || 0) + (parseInt(slot.irHr) || 0);
+    slot.hr       = (parseInt(slot.irHr) || 0) + replacementHR;
     delete slot.irPlayer;
     delete slot.irTeam;
     delete slot.irPosition;
@@ -657,18 +703,37 @@ export default async (req) => {
       }
     }
 
-    // Log the drop
+    const irMode = league.settings?.irMode || 'hold';
+
+    // Log the pickup transaction
+    if (!league.irTransactions) league.irTransactions = [];
+    league.irTransactions.push({
+      t:        Date.now(),
+      mgr,
+      player:   pickupPlayer,
+      team:     pickupTeam,
+      position: pickupPos,
+      action:   'pickup',
+      month:    cm,
+      replacing: slot.swappedOut || slot.irPlayer || slot.player || null,
+    });
+
+    // Drop the current player if it's a straight swap (not IR fill)
     const droppedPlayer = slot.player;
     league.changeLog = league.changeLog || [];
-    league.changeLog.push({ t: Date.now(), type: 'waiver', dropped: droppedPlayer, picked: pickupPlayer, mgr, month: cm });
-    if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
+    if (droppedPlayer) {
+      league.changeLog.push({ t: Date.now(), type: 'waiver', dropped: droppedPlayer, picked: pickupPlayer, mgr, month: cm });
+      if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
+    }
 
-    // Swap in the pickup player — reset HR to 0 (they start fresh from waiver)
-    slot.player = pickupPlayer;
-    slot.team = pickupTeam;
+    // In swap mode: replacement fills the starter slot directly
+    // In hold mode: replacement fills the open IR slot (slot.player while irPlayer holds)
+    slot.player   = pickupPlayer;
+    slot.team     = pickupTeam;
     slot.position = pickupPos;
-    slot.hr = 0;
-    // Reset baseline so next sync anchors correctly
+    slot.hr       = 0; // starts fresh from pickup date
+
+    // Reset baseline so next sync anchors from zero for this player
     if (league.seasonBaseline && pickupNorm) {
       delete league.seasonBaseline[pickupNorm];
     }

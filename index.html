@@ -540,6 +540,40 @@ body::before {
 .notice.success { background: rgba(58,160,92,0.08); border-color: rgba(58,160,92,0.3); color: var(--text-dim); }
 .notice.warn { background: rgba(240,199,94,0.08); border-color: rgba(240,199,94,0.3); color: var(--text-dim); }
 .notice.err { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.3); color: var(--text-dim); }
+/* ── TOAST NOTIFICATIONS ── */
+.toast-container {
+  position: fixed;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+  width: min(420px, calc(100vw - 32px));
+}
+.toast {
+  background: var(--panel-solid, #1a1f2e);
+  border: 1px solid var(--panel-border, rgba(255,255,255,0.08));
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--text, #f0f0f0);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  pointer-events: all;
+  animation: toastIn 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.toast.toast-err  { border-color: rgba(239,68,68,0.4); background: rgba(20,10,10,0.95); }
+.toast.toast-ok   { border-color: rgba(58,160,92,0.4); }
+.toast.toast-info { border-color: rgba(96,165,250,0.3); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 </style>
 </head>
 <body>
@@ -558,6 +592,7 @@ body::before {
   </div>
 </header>
 
+<div id="toast-container" class="toast-container"></div>
 <div id="view" class="page"></div>
 
 <div class="modal-overlay" id="auth-modal">
@@ -814,7 +849,7 @@ async function submitForgotPassword() {
 
 async function copyForgotLink() {
   const url = document.getElementById('forgot-link-display').textContent;
-  try { await navigator.clipboard.writeText(url); alert('Reset link copied'); }
+  try { await navigator.clipboard.writeText(url); toastErr('Reset link copied'); }
   catch { prompt('Copy this link:', url); }
 }
 
@@ -992,7 +1027,7 @@ async function adminCheckPush(leagueId, leagueName) {
 }
 
 async function adminApprovePending(leagueId) {
-  if (!confirm('Approve ALL pending members in this league?')) return;
+  if (!await confirmDialog('Approve ALL pending members in this league?')) return;
   try {
     const r = await fetch(API_ADMIN, {
       method: 'POST',
@@ -1512,6 +1547,46 @@ async function submitJoin(token) {
 
 let CURRENT_LEAGUE = null;
 const APP_VERSION = '202607101938'; // updated on every deploy
+
+// ── TOAST NOTIFICATIONS ──
+// Replaces native alert() with non-blocking, mobile-friendly toasts.
+function toast(msg, type = 'info', duration = 3500) {
+  const container = document.getElementById('toast-container');
+  if (!container) { console.warn(msg); return; }
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  const icon = type === 'err' ? '❌' : type === 'ok' ? '✓' : 'ℹ';
+  el.innerHTML = `<span style="flex-shrink:0">${icon}</span><span style="flex:1">${escapeHtml(String(msg))}</span>`;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.animation = 'toastOut 0.2s ease forwards';
+    setTimeout(() => el.remove(), 200);
+  }, duration);
+}
+
+function toastOk(msg)  { toast(msg, 'ok', 3000); }
+function toastErr(msg) { toast(msg, 'err', 5000); }
+
+// Replacement for confirm() — returns a Promise<boolean>
+function confirmDialog(msg) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:360px">
+        <div class="modal-body" style="padding:20px">
+          <p style="font-size:14px;color:var(--text);margin:0 0 20px">${escapeHtml(msg)}</p>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+            <button class="btn btn-primary" id="confirm-ok">Confirm</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#confirm-ok').onclick = () => { overlay.remove(); resolve(true); };
+    overlay.querySelector('#confirm-cancel').onclick = () => { overlay.remove(); resolve(false); };
+  });
+}
 let CURRENT_TAB = 'scoreboard';
 let _pollTimer = null;
 
@@ -1978,10 +2053,17 @@ function renderScoreboard(body) {
     }
   }
 
-  // Columns: Player | Pos | Team | +3d | HR
-  // Pos and Team are kept very tight on mobile so player name + fire emojis
-  // have maximum breathing room. HR is last, aligning with the panel header total.
-  const hrCarryover = league.settings?.irHrCarryover || 'keep';
+  const rostersLiveAt = month?.rostersLiveAt || league.draftClosedAt;
+  const liveLabel = rostersLiveAt
+    ? `Rosters live since ${new Date(rostersLiveAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+    : (league.draft ? 'Draft in progress — HR tracking starts when draft closes' : 'HR tracking active');
+
+  html += `
+    <div style="margin-bottom:12px;padding:10px 14px;background:rgba(240,199,94,0.06);border:1px solid rgba(240,199,94,0.15);border-radius:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+      <span style="font-size:12px;color:var(--text-muted)">📅 ${escapeHtml(liveLabel)}</span>
+      ${league.draft ? '<span style="font-size:11px;color:var(--accent);font-weight:600">⏳ Draft in progress</span>' : ''}
+    </div>
+  `;
   for (const mgr of league.managers) {
     const roster = month.rosters[mgr] || [];
     // Total includes swapped-out player HRs if carryover is 'keep'
@@ -2390,6 +2472,11 @@ function renderRostersEdit(body) {
   const viewMgr = _rosterViewMgr || myManager || (isCommish || isAdmin ? league.managers[0] : null);
   const viewMonth = _rosterViewMonth || currentMonth;
 
+  const rostersLiveAt = league.months?.[currentMonth]?.rostersLiveAt || league.draftClosedAt;
+  const liveLabel = rostersLiveAt
+    ? `Tracking since ${new Date(rostersLiveAt).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}`
+    : league.draft ? 'Draft in progress' : 'Active';
+
   if (!viewMgr) {
     body.innerHTML = `<div class="notice info">You don't have a roster in this league yet. You'll need to be approved and complete the draft first.</div>`;
     return;
@@ -2411,6 +2498,7 @@ function renderRostersEdit(body) {
         <div style="font-size:13px;color:var(--text-muted);margin-top:2px">
           ${escapeHtml(viewMonth)} · <strong style="color:var(--accent)">${totalHR} HR</strong>
           ${irSlots ? ` · IR: ${irCount}/${irSlots}` : ''}
+          · <span style="color:var(--text-faint);font-size:11px">${escapeHtml(liveLabel)}</span>
           ${(isCommish || isAdmin) ? ` · <span style="color:var(--text-faint);font-size:11px">✏ Click HR to edit</span>` : ''}
         </div>
       </div>
@@ -2643,7 +2731,7 @@ function normNameFE(s) {
 }
 
 async function moveToIR(mgr, slotIndex) {
-  if (!confirm(`Move this player to the IR slot? Their current HRs will be preserved. You can then pick up a replacement using the waiver wire.`)) return;
+  if (!await confirmDialog(`Move this player to the IR slot? Their current HRs will be preserved. You can then pick up a replacement using the waiver wire.`)) return;
   const { isCommish } = CURRENT_LEAGUE;
   const r = await fetch(API_LEAGUE, {
     method: 'POST',
@@ -2657,20 +2745,20 @@ async function moveToIR(mgr, slotIndex) {
     }),
   });
   const res = await r.json();
-  if (!res.ok) { alert(res.error); return; }
+  if (!res.ok) { toastErr(res.error); return; }
   await refreshLeague();
   renderActiveTab();
 }
 
 async function returnFromIR(mgr, slotIndex) {
-  if (!confirm(`Return the IR player to the active lineup? The temporary replacement will be dropped.`)) return;
+  if (!await confirmDialog(`Return the IR player to the active lineup? The temporary replacement will be dropped.`)) return;
   const r = await fetch(API_LEAGUE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ action: 'return-from-ir', leagueId: CURRENT_LEAGUE.league.id, manager: mgr, slotIndex }),
   });
   const res = await r.json();
-  if (!res.ok) { alert(res.error); return; }
+  if (!res.ok) { toastErr(res.error); return; }
   await refreshLeague();
   renderActiveTab();
 }
@@ -3754,7 +3842,7 @@ function moveDraftOrder(idx, dir) {
 }
 
 async function forceResetDraft(leagueId) {
-  if (!confirm('This will clear the stuck draft and let you open a new one. Any picks already made will be lost. Continue?')) return;
+  if (!await confirmDialog('This will clear the stuck draft and let you open a new one. Any picks already made will be lost. Continue?')) return;
   const err = document.getElementById('open-draft-err');
   err.textContent = '';
   const draftType = document.getElementById('draft-type').value;
@@ -3829,11 +3917,11 @@ function triggerLiveDraftSearch(query) {
 async function makeDraftPickByIndex(idx) {
   const player = window._draftFilteredPool?.[idx];
   if (!player) {
-    alert(`Player not found at index ${idx}. Pool size: ${window._draftFilteredPool?.length ?? 'undefined'}. Try refreshing.`);
+    toastErr(`Player not found at index ${idx}. Pool size: ${window._draftFilteredPool?.length ?? 'undefined'}. Try refreshing.`);
     return;
   }
   if (!player.name || !player.team) {
-    alert(`Player data incomplete: name="${player.name}" team="${player.team}". Try refreshing the draft board.`);
+    toastErr(`Player data incomplete: name="${player.name}" team="${player.team}". Try refreshing the draft board.`);
     return;
   }
   await makeDraftPick(CURRENT_LEAGUE.league.id, player);
@@ -3919,7 +4007,7 @@ async function makeDraftPick(leagueId, player) {
         const c = document.getElementById('draft-pool-scroll-container');
         if (c) c.scrollTop = savedScroll;
       });
-      alert(res.error || 'Pick failed');
+      toastErr(res.error || 'Pick failed');
       return;
     }
     // Server confirmed pick. The optimistic render already shows the correct
@@ -3936,7 +4024,7 @@ async function makeDraftPick(leagueId, player) {
       const c = document.getElementById('draft-pool-scroll-container');
       if (c) c.scrollTop = savedScroll;
     });
-    alert('Connection failed — try again');
+    toastErr('Connection failed — try again');
   }
 }
 
@@ -3973,7 +4061,7 @@ async function undoLastDraftPick(leagueId) {
   const confirmMsg = lastPick
     ? `Undo ${lastPick.mgr}'s pick of ${lastPick.player}? They'll need to pick again.`
     : 'Undo the last pick?';
-  if (!confirm(confirmMsg)) return;
+  if (!await confirmDialog(confirmMsg)) return;
 
   // Optimistic update
   const prevDraft = JSON.parse(JSON.stringify(_draft));
@@ -3999,31 +4087,31 @@ async function undoLastDraftPick(leagueId) {
     body: JSON.stringify({ action: 'undo', leagueId }),
   });
   const res = await r.json();
-  if (!res.ok) { _draft = prevDraft; renderDraftRoom(document.getElementById('tab-body')); alert(res.error); return; }
+  if (!res.ok) { _draft = prevDraft; renderDraftRoom(document.getElementById('tab-body')); toastErr(res.error); return; }
   await loadDraftState(document.getElementById('tab-body'));
 }
 
 async function skipDraftPick(leagueId) {
-  if (!confirm('Skip this manager\'s pick?')) return;
+  if (!await confirmDialog('Skip this manager\'s pick?')) return;
   const r = await fetch(API_DRAFT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ action: 'skip', leagueId }),
   });
   const res = await r.json();
-  if (!res.ok) { alert(res.error); return; }
+  if (!res.ok) { toastErr(res.error); return; }
   await loadDraftState(document.getElementById('tab-body'));
 }
 
 async function resetDraft(leagueId) {
-  if (!confirm('Close the draft? All picks will be lost.')) return;
+  if (!await confirmDialog('Close the draft? All picks will be lost.')) return;
   const r = await fetch(API_DRAFT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ action: 'close', leagueId }),
   });
   const res = await r.json();
-  if (!res.ok) { alert(res.error); return; }
+  if (!res.ok) { toastErr(res.error); return; }
   _draft = null;
   await loadDraftState(document.getElementById('tab-body'));
 }
@@ -4609,7 +4697,7 @@ async function submitChangePassword() {
     const res = await r.json();
     if (!res.ok) { err.textContent = res.error || 'Failed to update'; return; }
     document.getElementById('change-pw-modal').remove();
-    alert('Password updated successfully.');
+    toastErr('Password updated successfully.');
   } catch (e) {
     err.textContent = 'Connection failed';
   }
@@ -4718,7 +4806,7 @@ async function enableNotificationsFor(elementId) {
     const reg = await navigator.serviceWorker.register('/sw.js');
     await navigator.serviceWorker.ready;
     const perm = await Notification.requestPermission();
-    if (perm !== 'granted') { alert('Notifications were not allowed. Check your browser settings.'); return; }
+    if (perm !== 'granted') { toastErr('Notifications were not allowed. Check your browser settings.'); return; }
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(info.publicKey),
@@ -4730,7 +4818,7 @@ async function enableNotificationsFor(elementId) {
     });
     renderNotificationsPanelInto(elementId);
   } catch (e) {
-    alert('Could not enable notifications: ' + e.message);
+    toastErr('Could not enable notifications: ' + e.message);
   }
 }
 
@@ -4748,7 +4836,7 @@ async function disableNotificationsFor(elementId) {
     }
     renderNotificationsPanelInto(elementId);
   } catch (e) {
-    alert('Could not disable notifications: ' + e.message);
+    toastErr('Could not disable notifications: ' + e.message);
   }
 }
 
@@ -5130,15 +5218,15 @@ async function submitLinkMember() {
 
 async function approveMember(email) { await leagueAction('approve', { email }); await refreshLeague(); }
 async function declineMember(email) {
-  if (!confirm('Decline this join request?')) return;
+  if (!await confirmDialog('Decline this join request?')) return;
   await leagueAction('decline', { email }); await refreshLeague();
 }
 async function removeMember(manager) {
-  if (!confirm(`Remove ${manager}? Past rosters stay; they won't appear going forward.`)) return;
+  if (!await confirmDialog(`Remove ${manager}? Past rosters stay; they won't appear going forward.`)) return;
   await leagueAction('remove', { manager }); await refreshLeague();
 }
 async function regenInvite() {
-  if (!confirm('Regenerate the invite link? The current link will stop working.')) return;
+  if (!await confirmDialog('Regenerate the invite link? The current link will stop working.')) return;
   const res = await leagueAction('regenerate-invite', {});
   if (res?.ok) await refreshLeague();
 }
@@ -5264,10 +5352,10 @@ async function leagueAction(action, payload) {
       body: JSON.stringify({ action, leagueId: CURRENT_LEAGUE.league.id, ...payload }),
     });
     const res = await r.json();
-    if (!res.ok) alert(res.error || 'Action failed');
+    if (!res.ok) toastErr(res.error || 'Action failed');
     return res;
   } catch (e) {
-    alert('Connection failed');
+    toastErr('Connection failed');
     return null;
   }
 }
