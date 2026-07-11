@@ -1549,7 +1549,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607111518'; // updated on every deploy
+const APP_VERSION = '202607111523'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -2827,32 +2827,30 @@ function openWaiverClaim(mgr, slotIndex) {
   wrap.className = 'modal-overlay open';
   wrap.id = 'waiver-modal';
   wrap.innerHTML = `
-    <div class="modal" style="max-width:580px;width:100%;max-height:calc(100dvh - 40px);display:flex;flex-direction:column;overflow:hidden">
-      <div class="modal-head">
+    <div class="modal" style="max-width:580px;width:100%;height:calc(100dvh - 40px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;overflow:hidden">
+      <div class="modal-head" style="flex-shrink:0">
         <div class="modal-title">🏥 Pick up replacement for ${escapeHtml(slot?.irPlayer || '?')}</div>
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
       </div>
-      <div class="modal-body" style="padding:0">
-        <div style="padding:10px 16px;background:rgba(239,68,68,0.06);border-bottom:1px solid var(--panel-border);font-size:12px;color:var(--text-muted)">
-          Temporary replacement for <strong style="color:var(--text)">${escapeHtml(slot?.irPlayer || '')}</strong>
-          ${sameTeam ? ` · <span style="color:var(--accent)">Showing ${escapeHtml(slot?.irTeam || '')} players only (same-team rule)</span>` : ''}
-          ${blockedPositions.size ? ` · <span style="color:var(--orange)">Positions at limit: ${[...blockedPositions].join(', ')}</span>` : ''}
-        </div>
+      <div style="flex-shrink:0;padding:10px 16px;background:rgba(239,68,68,0.06);border-bottom:1px solid var(--panel-border);font-size:12px;color:var(--text-muted)">
+        Temporary replacement for <strong style="color:var(--text)">${escapeHtml(slot?.irPlayer || '')}</strong>
+        ${sameTeam ? ` · <span style="color:var(--accent)">Showing ${escapeHtml(slot?.irTeam || '')} players only (same-team rule)</span>` : ''}
+        ${blockedPositions.size ? ` · <span style="color:var(--orange)">Positions at limit: ${[...blockedPositions].join(', ')}</span>` : ''}
+      </div>
 
-        <div style="padding:8px 16px;border-bottom:1px solid var(--panel-border);display:flex;gap:8px;align-items:center">
-          <input class="input compact" id="waiver-search" placeholder="Filter by name…" style="flex:1;max-width:200px" oninput="filterWaiverPool()">
-          <span style="font-size:11px;color:var(--text-muted)" id="waiver-count"></span>
-        </div>
+      <div style="flex-shrink:0;padding:8px 16px;border-bottom:1px solid var(--panel-border);display:flex;gap:8px;align-items:center">
+        <input class="input compact" id="waiver-search" placeholder="Filter by name…" style="flex:1;max-width:200px" oninput="filterWaiverPool()">
+        <span style="font-size:11px;color:var(--text-muted)" id="waiver-count"></span>
+      </div>
 
-        <div id="waiver-pool-list" style="flex:1;overflow-y:auto;min-height:100px">
-          <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
-        </div>
+      <div id="waiver-pool-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0">
+        <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
+      </div>
 
-        <div style="padding:12px 16px;border-top:1px solid var(--panel-border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <div id="waiver-selection-display" style="flex:1;font-size:13px;color:var(--text-faint)">Select a player above</div>
-          <button class="btn btn-primary" id="waiver-confirm-btn" disabled onclick="submitWaiverClaim('${escapeAttr(mgr)}',${slotIndex})">Confirm pickup</button>
-          <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-        </div>
+      <div style="flex-shrink:0;padding:12px 16px;border-top:1px solid var(--panel-border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div id="waiver-selection-display" style="flex:1;font-size:13px;color:var(--text-faint)">Select a player above</div>
+        <button class="btn btn-primary" id="waiver-confirm-btn" disabled onclick="submitWaiverClaim('${escapeAttr(mgr)}',${slotIndex})">Confirm pickup</button>
+        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
       </div>
     </div>
   `;
