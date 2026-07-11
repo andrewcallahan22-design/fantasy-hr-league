@@ -113,20 +113,21 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
     const ownerMember  = (league.members || []).find(m => m.email?.toLowerCase() === ownerEmail?.toLowerCase());
     const hrEmoji      = getHrEmojiFromProfile(ownerProfile);
 
-    // Owner gets celebratory push with their custom emoji
+    // Owner gets celebratory push
+    // Title: short, always fits — emoji + HR count + their team
+    // Body:  player name + season total context
     if (ownerEmail) {
       enqueue(ownerEmail, JSON.stringify({
-        title: `${hrEmoji} ${ev.player} just went yard!`,
-        body: `+${ev.delta} HR for YOUR team · ${league.name}`,
+        title: `${hrEmoji} +${ev.delta} HR · Your team!`,
+        body:  `${ev.player} goes yard! 💣 ${league.name}`,
         tag,
         url: `/league/${league.id}`,
       }), tag);
     }
 
-    // Others with notifyAll get the owner's custom rival message if set,
-    // otherwise fall back to a factual notification.
-    // Format: title = "[Player] just homered for [Manager]!"
-    //         body  = custom trash talk message (if set) OR factual "+1 HR · League"
+    // Others with notifyAll get rival notification
+    // Title: short — whose team scored
+    // Body:  player name + custom trash talk (if set) or factual
     const rivalMsg = getRivalMessageFromProfile(ownerProfile, ownerMember, ev.player, ev.mgr);
     for (const member of (league.members || [])) {
       if (member.status !== 'active' || !member.email) continue;
@@ -134,10 +135,10 @@ export async function dispatchNotifications({ league, hrEvents, leaderBefore, le
       if (email === ownerEmail) continue;
       if (!allPrefs[email]?.notifyAll) continue;
       enqueue(email, JSON.stringify({
-        title: `⚾ ${ev.player} just homered for ${ev.mgr}!`,
-        body: rivalMsg
-          ? rivalMsg
-          : `+${ev.delta} HR · ${league.name}`,
+        title: `⚾ +${ev.delta} HR · ${ev.mgr}'s team`,
+        body:  rivalMsg
+          ? `${ev.player} — ${rivalMsg}`
+          : `${ev.player} goes yard! · ${league.name}`,
         tag: `other-${tag}`,
         url: `/league/${league.id}`,
       }), `other-${tag}`);
