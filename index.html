@@ -1546,7 +1546,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607110321'; // updated on every deploy
+const APP_VERSION = '202607110328'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -2056,13 +2056,13 @@ function renderScoreboard(body) {
   const rostersLiveAt = month?.rostersLiveAt || league.draftClosedAt;
   const liveLabel = rostersLiveAt
     ? `Rosters live since ${new Date(rostersLiveAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
-    : (league.draft ? 'Draft in progress — HR tracking starts when draft closes' : 'HR tracking active');
+    : (league.draft?.status === 'active' ? 'Draft in progress — HR tracking starts when draft closes' : 'HR tracking active');
   const hrCarryover = league.settings?.irHrCarryover || 'keep';
 
   html += `
     <div style="margin-bottom:12px;padding:10px 14px;background:rgba(240,199,94,0.06);border:1px solid rgba(240,199,94,0.15);border-radius:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
       <span style="font-size:12px;color:var(--text-muted)">📅 ${escapeHtml(liveLabel)}</span>
-      ${league.draft ? '<span style="font-size:11px;color:var(--accent);font-weight:600">⏳ Draft in progress</span>' : ''}
+      ${league.draft?.status === 'active' ? '<span style="font-size:11px;color:var(--accent);font-weight:600">⏳ Draft in progress</span>' : ''}
     </div>
   `;
   for (const mgr of league.managers) {
@@ -2476,7 +2476,7 @@ function renderRostersEdit(body) {
   const rostersLiveAt = league.months?.[currentMonth]?.rostersLiveAt || league.draftClosedAt;
   const liveLabel = rostersLiveAt
     ? `Tracking since ${new Date(rostersLiveAt).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}`
-    : league.draft ? 'Draft in progress' : 'Active';
+    : league.draft?.status === 'active' ? 'Draft in progress' : 'Active';
 
   if (!viewMgr) {
     body.innerHTML = `<div class="notice info">You don't have a roster in this league yet. You'll need to be approved and complete the draft first.</div>`;
@@ -3842,6 +3842,20 @@ function moveDraftOrder(idx, dir) {
   });
 }
 
+async function clearStaleDraft(leagueId) {
+  if (!await confirmDialog('Clear the stale draft data? This will fix the "Draft in progress" banner. No roster data will be affected.')) return;
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'clear-draft', leagueId }),
+  });
+  const res = await r.json();
+  if (!res.ok) { toastErr(res.error || 'Failed to clear draft'); return; }
+  toastOk('Draft data cleared — scoreboard will update shortly');
+  await refreshLeague();
+  renderActiveTab();
+}
+
 async function forceResetDraft(leagueId) {
   if (!await confirmDialog('This will clear the stuck draft and let you open a new one. Any picks already made will be lost. Continue?')) return;
   const err = document.getElementById('open-draft-err');
@@ -4942,6 +4956,16 @@ function renderSettings(body) {
   const s = league.settings || {};
 
   let html = '';
+
+  // Stale draft warning — shows when league.draft exists but isn't active
+  if (league.draft && league.draft.status !== 'active') {
+    html += `
+      <div class="notice warn" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span>⚠ A stale draft object was found. The scoreboard may show "Draft in progress" incorrectly.</span>
+        <button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="clearStaleDraft('${escapeAttr(league.id)}')">Clear it</button>
+      </div>
+    `;
+  }
 
   if (isCommish) {
     html += `

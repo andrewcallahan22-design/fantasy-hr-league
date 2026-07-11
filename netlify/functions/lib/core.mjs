@@ -230,6 +230,20 @@ export async function runSyncForLeague(leagueId) {
   const league = await loadLeague(leagueId);
   if (!league) return { ok: false, error: 'League not found' };
 
+  // Auto-clear stale draft objects — if draft exists but status isn't 'active',
+  // it's leftover data that causes the "Draft in progress" banner to show incorrectly.
+  if (league.draft && league.draft.status !== 'active') {
+    console.log(`[sync:${leagueId}] Clearing stale draft object (status: ${league.draft.status})`);
+    league.draft = null;
+    if (!league.draftClosedAt) {
+      league.draftClosedAt = Date.now();
+      if (league.currentMonth && league.months?.[league.currentMonth]) {
+        league.months[league.currentMonth].rostersLiveAt = league.draftClosedAt;
+      }
+    }
+    await saveLeague(league);
+  }
+
   const key = league.currentMonth;
   if (!key || !league.months?.[key]) return { ok: false, error: 'No active month' };
   if (!league.seasonBaseline) league.seasonBaseline = {};

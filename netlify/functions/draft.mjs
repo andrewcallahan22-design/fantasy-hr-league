@@ -570,5 +570,23 @@ export default async (req) => {
     return Response.json({ ok: true });
   }
 
+  // ── CLEAR STALE DRAFT ──
+  // Clears a stale/stuck draft object without starting a new draft.
+  // Used when league.draft is non-null but the draft isn't actually active.
+  if (action === 'clear-draft') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can clear the draft' }, { status: 403 });
+    }
+    league.draft = null;
+    if (!league.draftClosedAt) {
+      league.draftClosedAt = Date.now();
+      if (league.currentMonth && league.months[league.currentMonth]) {
+        league.months[league.currentMonth].rostersLiveAt = Date.now();
+      }
+    }
+    await saveLeague(league);
+    return Response.json({ ok: true });
+  }
+
   return Response.json({ ok: false, error: 'Unknown action' }, { status: 400 });
 };
