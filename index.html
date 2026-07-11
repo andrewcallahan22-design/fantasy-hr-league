@@ -464,7 +464,10 @@ body::before {
 .modal-overlay {
   position: fixed; inset: 0; z-index: 100;
   background: rgba(5,8,16,0.85); backdrop-filter: blur(6px);
-  display: none; align-items: center; justify-content: center; padding: 20px;
+  display: none; align-items: center; justify-content: center;
+  padding: max(20px, env(safe-area-inset-top, 20px)) 16px max(20px, env(safe-area-inset-bottom, 20px));
+  box-sizing: border-box;
+  overflow-y: auto;
 }
 .modal-overlay.open { display: flex; }
 .modal {
@@ -1546,7 +1549,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607110328'; // updated on every deploy
+const APP_VERSION = '202607111518'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -2823,9 +2826,8 @@ function openWaiverClaim(mgr, slotIndex) {
   const wrap = document.createElement('div');
   wrap.className = 'modal-overlay open';
   wrap.id = 'waiver-modal';
-  wrap.style.cssText = 'align-items:flex-start;padding:20px;overflow-y:auto';
   wrap.innerHTML = `
-    <div class="modal" style="max-width:580px;width:100%">
+    <div class="modal" style="max-width:580px;width:100%;max-height:calc(100dvh - 40px);display:flex;flex-direction:column;overflow:hidden">
       <div class="modal-head">
         <div class="modal-title">🏥 Pick up replacement for ${escapeHtml(slot?.irPlayer || '?')}</div>
         <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
@@ -2842,7 +2844,7 @@ function openWaiverClaim(mgr, slotIndex) {
           <span style="font-size:11px;color:var(--text-muted)" id="waiver-count"></span>
         </div>
 
-        <div id="waiver-pool-list" style="max-height:400px;overflow-y:auto">
+        <div id="waiver-pool-list" style="flex:1;overflow-y:auto;min-height:100px">
           <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
         </div>
 
