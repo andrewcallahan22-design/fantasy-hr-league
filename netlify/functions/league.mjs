@@ -433,6 +433,21 @@ export default async (req) => {
     return Response.json({ ok: true, lastSync: league.lastSync }, { headers: NO_CACHE });
   }
 
+  // ── EMERGENCY RESTORE (admin only) ──
+  if (body.action === 'emergency-restore') {
+    if (!session.isAdmin) return Response.json({ ok: false, error: 'Admin only' }, { status: 403 });
+    const restoredRosters = body.rosters;
+    const targetMonth = body.month || league.currentMonth;
+    if (!restoredRosters) return Response.json({ ok: false, error: 'rosters required' });
+    if (!league.months[targetMonth]) league.months[targetMonth] = {};
+    league.months[targetMonth].rosters = restoredRosters;
+    league.months[targetMonth].rostersLiveAt = league.draftClosedAt || Date.now();
+    league.currentMonth = targetMonth;
+    for (const m of (body.deleteMonths || [])) delete league.months[m];
+    await saveLeague(league);
+    return Response.json({ ok: true, month: targetMonth, managers: Object.keys(restoredRosters) }, { headers: NO_CACHE });
+  }
+
   if (body.action === 'set-current-month') {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {
       return Response.json({ ok: false, error: 'Commissioner only' }, { status: 403 });
