@@ -1584,7 +1584,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607121641'; // updated on every deploy
+const APP_VERSION = '202607121650'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -3967,7 +3967,7 @@ async function setCurrentMonth(leagueId) {
   const year  = document.getElementById('set-month-year')?.value;
   if (!month || !year) return;
   const monthKey = `${month}-${year}`;
-  if (!await confirmDialog(`Change current scoring month to ${monthKey}? This will create a new roster bucket if it doesn't exist. Existing HR data stays in ${CURRENT_LEAGUE?.league?.currentMonth}.`)) return;
+  if (!await confirmDialog(`Move all rosters and HR data from ${CURRENT_LEAGUE?.league?.currentMonth} → ${monthKey}? All current player data and home run counts will be preserved in ${monthKey}. The ${CURRENT_LEAGUE?.league?.currentMonth} bucket will be removed.`)) return;
   const r = await fetch(API_LEAGUE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -5128,7 +5128,7 @@ function renderSettings(body) {
             </select>
             <button class="btn btn-sm btn-ghost" onclick="setCurrentMonth('${escapeAttr(league.id)}')">Update month</button>
           </div>
-          <p class="input-help" style="margin-top:8px;color:var(--orange)">⚠ Changing the month creates a new roster bucket. Existing HR data stays in the old month.</p>
+          <p class="input-help" style="margin-top:8px;color:var(--orange)">⚠ All current roster data and HR counts will be moved to the selected month. The current month bucket will be removed.</p>
         </div>
       </div>
 
