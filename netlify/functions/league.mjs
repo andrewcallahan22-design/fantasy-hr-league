@@ -441,16 +441,50 @@ export default async (req) => {
     if (!newMonth.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)-\d{4}$/)) {
       return Response.json({ ok: false, error: 'Invalid month format' }, { status: 400 });
     }
-    // Create the month bucket if it doesn't exist yet
-    if (!league.months[newMonth]) {
-      league.months[newMonth] = { rosters: {} };
-      for (const mgr of (league.managers || [])) {
-        league.months[newMonth].rosters[mgr] = emptyRoster(league.settings.rosterSize);
-      }
+    const oldMonth = league.currentMonth;
+    if (newMonth === oldMonth) {
+      return Response.json({ ok: true, month: newMonth }, { headers: NO_CACHE });
     }
+
+    // Move all roster + HR data from old month into new month.
+    // This preserves every manager's players and HR counts — nothing is lost.
+    const oldData = league.months[oldMonth];
+    if (oldData) {
+      // If new month already has a bucket, merge carefully
+      if (!league.months[newMonth]) {
+        // Simple case: just rename the bucket
+        league.months[newMonth] = oldData;
+      } else {
+        // New month exists — merge rosters (old month wins for any slot that has a player)
+        const newData = league.months[newMonth];
+        for (const mgr of Object.keys(oldData.rosters || {})) {
+          const oldRoster = oldData.rosters[mgr] || [];
+          const newRoster = newData.rosters?.[mgr] || [];
+          // Use old roster if it has any players, otherwise keep new
+          const hasOldPlayers = oldRoster.some(s => s.player || s.irPlayer);
+          if (hasOldPlayers) {
+            if (!newData.rosters) newData.rosters = {};
+            newData.rosters[mgr] = oldRoster;
+          }
+        }
+        // Copy rostersLiveAt if not already set
+        if (oldData.rostersLiveAt && !newData.rostersLiveAt) {
+          newData.rostersLiveAt = oldData.rostersLiveAt;
+        }
+      }
+      // Remove the old month bucket
+      delete league.months[oldMonth];
+    }
+
     league.currentMonth = newMonth;
+    // Do NOT touch seasonBaseline — it's global and the sync uses it
+    // regardless of which month is current. Resetting it would cause
+    // the next sync to treat all players as new and zero out their HRs.
+    if (league.months[newMonth]) {
+      league.months[newMonth].rostersLiveAt = league.months[newMonth].rostersLiveAt || league.draftClosedAt;
+    }
     await saveLeague(league);
-    return Response.json({ ok: true, month: newMonth }, { headers: NO_CACHE });
+    return Response.json({ ok: true, month: newMonth, migratedFrom: oldMonth }, { headers: NO_CACHE });
   }
 
   // ── ADD MONTH ──

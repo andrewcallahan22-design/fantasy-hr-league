@@ -572,12 +572,13 @@ export default async (req) => {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {
       return Response.json({ ok: false, error: 'Only the commissioner can close the draft' }, { status: 403 });
     }
+    const draftedMonth = league.draft?.month; // save before nulling
     league.draft = null;
     // Record when the draft closed so the scoreboard can show "Rosters live since X"
     league.draftClosedAt = Date.now();
     // Ensure currentMonth matches the month that was just drafted
-    if (league.months && league.draft?.month) {
-      league.currentMonth = league.draft.month;
+    if (draftedMonth && league.months) {
+      league.currentMonth = draftedMonth;
     }
     league.months[league.currentMonth] = league.months[league.currentMonth] || {};
     league.months[league.currentMonth].rostersLiveAt = Date.now();

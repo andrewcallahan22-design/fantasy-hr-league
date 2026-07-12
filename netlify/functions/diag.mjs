@@ -15,6 +15,11 @@ export default async (req) => {
   const league = await loadLeague(leagueId);
   if (!league) return Response.json({ ok: false, error: 'League not found' }, { status: 404 });
 
+  // Raw dump — returns full league object for data recovery
+  if (url.searchParams.get('raw') === '1') {
+    return Response.json({ ok: true, league }, { headers: NO_CACHE });
+  }
+
   const key = league.currentMonth;
 
   // ── PUSH DEBUG MODE ──
