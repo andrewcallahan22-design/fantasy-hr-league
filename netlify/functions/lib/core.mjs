@@ -104,13 +104,21 @@ async function fetchGameLogStats(league, playerName, season) {
     if (date >= cutoff3d) last24h += hr;
   }
 
-  // Add today's live HRs if the game log doesn't already include today
-  // (i.e. the game is still in progress and not yet finalized)
-  if (!countedDates.has(today) && todayHR > 0) {
-    console.log(`[sync] Live HR detected for ${playerName}: ${todayHR} HR today (not yet in game log)`);
-    seasonHR += todayHR;
-    last7    += todayHR;
-    last24h  += todayHR;
+  // Add today's live HRs only if the game log's count for today is LESS than
+  // what the today-specific endpoint shows (game still finalizing) 
+  if (todayHR > 0) {
+    // Find today's HR count in the game log
+    const todayInLog = splits
+      .filter(s => s.date === today)
+      .reduce((sum, s) => sum + (parseInt(s?.stat?.homeRuns) || 0), 0);
+    if (!countedDates.has(today)) {
+      // Today not in game log at all — game in progress, add live HR
+      console.log(`[sync] Live HR detected for ${playerName}: ${todayHR} HR today (not yet in game log)`);
+      seasonHR += todayHR;
+      last7    += todayHR;
+      last24h  += todayHR;
+    }
+    // If today IS in game log, don't add again — game log is authoritative
   }
 
   return { last7, last24h, seasonHR };
@@ -230,6 +238,17 @@ export async function runSyncForLeague(leagueId) {
   const league = await loadLeague(leagueId);
   if (!league) return { ok: false, error: 'League not found' };
 
+  // ── Sync lock ──
+  // Prevent overlapping syncs from causing duplicate notifications.
+  // If a sync started less than 50s ago, skip this run.
+  const now = Date.now();
+  if (league.lastSyncStartedAt && (now - league.lastSyncStartedAt) < 50000) {
+    console.log(`[sync:${leagueId}] Skipping — sync already in progress (started ${Math.round((now - league.lastSyncStartedAt)/1000)}s ago)`);
+    return { ok: true, skipped: true };
+  }
+  league.lastSyncStartedAt = now;
+  await saveLeague(league); // write lock immediately
+
   // Auto-clear stale draft objects — if draft exists but status isn't 'active',
   // it's leftover data that causes the "Draft in progress" banner to show incorrectly.
   if (league.draft && league.draft.status !== 'active') {
@@ -344,6 +363,7 @@ export async function runSyncForLeague(leagueId) {
 
   const leaderAfter = computeLeader(league);
   league.lastSync = Date.now();
+  delete league.lastSyncStartedAt; // release lock
   await saveLeague(league);
 
   // Dispatch notifications — fire-and-forget

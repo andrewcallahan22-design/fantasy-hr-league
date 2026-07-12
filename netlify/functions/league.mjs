@@ -433,6 +433,26 @@ export default async (req) => {
     return Response.json({ ok: true, lastSync: league.lastSync }, { headers: NO_CACHE });
   }
 
+  if (body.action === 'set-current-month') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Commissioner only' }, { status: 403 });
+    }
+    const newMonth = String(body.month || '').trim();
+    if (!newMonth.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)-\d{4}$/)) {
+      return Response.json({ ok: false, error: 'Invalid month format' }, { status: 400 });
+    }
+    // Create the month bucket if it doesn't exist yet
+    if (!league.months[newMonth]) {
+      league.months[newMonth] = { rosters: {} };
+      for (const mgr of (league.managers || [])) {
+        league.months[newMonth].rosters[mgr] = emptyRoster(league.settings.rosterSize);
+      }
+    }
+    league.currentMonth = newMonth;
+    await saveLeague(league);
+    return Response.json({ ok: true, month: newMonth }, { headers: NO_CACHE });
+  }
+
   // ── ADD MONTH ──
   if (body.action === 'add-month') {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {

@@ -372,7 +372,18 @@ export default async (req) => {
     }
     const keys = Object.keys(league.months || {}).sort((a, b) => monthSortKey(a) - monthSortKey(b));
     const latest = keys[keys.length - 1] || league.currentMonth;
-    const newMonth = nextMonthKey(latest);
+
+    // Use the commissioner's explicitly chosen month if provided.
+    // Fall back to current month for first draft, next month for subsequent drafts.
+    let newMonth;
+    if (body.month && body.month.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)-\d{4}$/)) {
+      newMonth = body.month;
+    } else {
+      const hasExistingActivity = Object.values(league.months || {}).some(m =>
+        Object.values(m.rosters || {}).some(r => r.some(s => s.player))
+      );
+      newMonth = hasExistingActivity ? nextMonthKey(latest) : latest;
+    }
     if (league.months?.[newMonth]) {
       return Response.json({ ok: false, error: `${newMonth} already exists` }, { status: 400 });
     }
@@ -564,6 +575,10 @@ export default async (req) => {
     league.draft = null;
     // Record when the draft closed so the scoreboard can show "Rosters live since X"
     league.draftClosedAt = Date.now();
+    // Ensure currentMonth matches the month that was just drafted
+    if (league.months && league.draft?.month) {
+      league.currentMonth = league.draft.month;
+    }
     league.months[league.currentMonth] = league.months[league.currentMonth] || {};
     league.months[league.currentMonth].rostersLiveAt = Date.now();
     await saveLeague(league);

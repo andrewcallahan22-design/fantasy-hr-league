@@ -52,7 +52,7 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+html, body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
 body { padding-bottom: env(safe-area-inset-bottom, 0px); }
 button { font-family: inherit; cursor: pointer; }
 input, select { font-family: inherit; }
@@ -279,7 +279,12 @@ body::before {
 .data-table {
   width: 100%; border-collapse: collapse;
   font-size: 13px; color: var(--text-dim);
+  /* Ensure table never exceeds its container on small phones */
+  table-layout: auto;
 }
+/* Wrap panel-body tables in overflow-x scroll so small phones don't clip */
+.panel-body { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* But roster/standings panels stay fixed since they use table-layout:fixed */
 .data-table th {
   text-align: left; padding: 9px 12px;
   font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 600;
@@ -531,6 +536,35 @@ body::before {
 }
 @media (max-width: 600px) {
   .settings-row { grid-template-columns: 1fr; }
+}
+
+/* ── MOBILE OPTIMIZATIONS (phones ≤ 390px, e.g. iPhone SE, older Androids) ── */
+@media (max-width: 390px) {
+  /* Tighten container padding so more content fits */
+  .container { padding: 0 10px; }
+  .panel-body { padding: 10px 12px; }
+  .panel-header { padding: 10px 14px; font-size: 11px; }
+
+  /* Data tables: reduce padding so columns have more room */
+  .data-table td, .data-table th { padding: 7px 8px; }
+
+  /* Tab bar: smaller text so all tabs fit */
+  .tab { font-size: 10px; padding: 10px 8px; letter-spacing: 0; }
+
+  /* Buttons: keep touch targets but reduce horizontal padding */
+  .btn { padding: 7px 10px; font-size: 12px; }
+  .btn-sm { padding: 4px 7px; font-size: 10px; }
+
+  /* League header title */
+  .league-title { font-size: 22px; }
+
+  /* Draft board: reduce rank column */
+  .data-table td:first-child { padding-left: 6px; padding-right: 4px; }
+}
+
+/* Ensure all panel-body tables can scroll horizontally if needed */
+.panel-body > table, .panel-body > div > table {
+  min-width: 0;
 }
 
 /* ── ALERTS ── */
@@ -1550,7 +1584,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607111625'; // updated on every deploy
+const APP_VERSION = '202607121641'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -3427,8 +3461,20 @@ function renderDraftRoom(body) {
           <div class="panel">
             <div class="panel-header">Open the Draft</div>
             <div class="panel-body">
-              <p class="input-help" style="margin-bottom:16px">Configure and open the draft for the next month. Based on <strong>${escapeHtml(prev)}</strong> standings.</p>
               <div class="settings-row">
+                <div class="field">
+                  <label>Drafting for month</label>
+                  <div style="display:flex;gap:8px">
+                    <select class="select" id="draft-month-month">
+                      ${['January','February','March','April','May','June','July','August','September','October','November','December']
+                        .map(m => `<option value="${m}" ${league.currentMonth?.startsWith(m) ? 'selected' : ''}>${m}</option>`).join('')}
+                    </select>
+                    <select class="select" id="draft-month-year" style="width:90px">
+                      ${[2025,2026,2027].map(y => `<option value="${y}" ${league.currentMonth?.endsWith(String(y)) ? 'selected' : ''}>${y}</option>`).join('')}
+                    </select>
+                  </div>
+                  <div class="input-help">This is the month managers are building their roster for. HR tracking begins when the draft closes.</div>
+                </div>
                 <div class="field">
                   <label>Draft type</label>
                   <select class="select" id="draft-type">
@@ -3436,6 +3482,8 @@ function renderDraftRoom(body) {
                     <option value="snake">Snake (1-2-3-4-4-3-2-1)</option>
                   </select>
                 </div>
+              </div>
+              <div class="settings-row">
                 <div class="field">
                   <label>Rounds</label>
                   <input class="input" type="number" id="draft-rounds" min="1" max="30" value="${league.settings?.rosterSize || 6}">
@@ -3460,7 +3508,7 @@ function renderDraftRoom(body) {
                 <div class="input-help">Drag or use arrows to adjust. Commissioner can override the auto order.</div>
               </div>
               <div class="error" id="open-draft-err"></div>
-              <button class="btn btn-primary" onclick="submitOpenDraft('${escapeAttr(league.id)}')">Open draft for next month</button>
+              <button class="btn btn-primary" onclick="submitOpenDraft('${escapeAttr(league.id)}')">Open draft</button>
             </div>
           </div>
         ` : `
@@ -3590,12 +3638,12 @@ function renderDraftRoom(body) {
             <table class="data-table" style="table-layout:fixed;width:100%">
               <thead style="position:sticky;top:0;z-index:2;background:var(--panel-solid)">
                 <tr>
-                  <th style="width:28px">#</th>
+                  <th style="width:22px">#</th>
                   <th>Player</th>
-                  <th class="right" style="width:48px">Ssn</th>
-                  <th class="right" style="width:44px">${escapeHtml((d.draft?.basedOn || 'Prev').split('-')[0])}</th>
-                  <th style="width:56px">Health</th>
-                  <th style="width:80px"></th>
+                  <th class="right" style="width:40px">Ssn</th>
+                  <th class="right" style="width:34px">${escapeHtml((d.draft?.basedOn || 'Prev').split('-')[0])}</th>
+                  <th style="width:44px">Hlth</th>
+                  <th style="width:68px"></th>
                 </tr>
               </thead>
               <tbody id="draft-pool-body">
@@ -3729,7 +3777,7 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
       : '';
 
     return `<tr style="${rowStyle}">
-      <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:28px">${p.rank || i + 1}</td>
+      <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:22px">${p.rank || i + 1}</td>
       <td>
         <button data-player="${escapeAttr(p.name)}" data-mlbid="${p.id || ''}" onclick="openPlayerProfile(this.dataset.player, this.dataset.mlbid||null)"
           style="background:none;border:none;padding:0;cursor:pointer;color:inherit;font:inherit;font-weight:600;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:rgba(255,255,255,0.2);display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px">
@@ -3743,7 +3791,12 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
       <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600;font-size:13px">${p.hr}</td>
       <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-muted);font-size:12px">${p.prevHR || '—'}</td>
       <td style="font-size:10px;color:${healthColor}">${escapeHtml(p.health)}</td>
-      <td style="text-align:center;white-space:nowrap">${queueBtn} ${actionCell}</td>
+      <td style="text-align:center">
+        <div style="display:flex;flex-direction:column;gap:2px;align-items:center">
+          ${queueBtn}
+          ${actionCell}
+        </div>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -3909,6 +3962,24 @@ function moveDraftOrder(idx, dir) {
   });
 }
 
+async function setCurrentMonth(leagueId) {
+  const month = document.getElementById('set-month-month')?.value;
+  const year  = document.getElementById('set-month-year')?.value;
+  if (!month || !year) return;
+  const monthKey = `${month}-${year}`;
+  if (!await confirmDialog(`Change current scoring month to ${monthKey}? This will create a new roster bucket if it doesn't exist. Existing HR data stays in ${CURRENT_LEAGUE?.league?.currentMonth}.`)) return;
+  const r = await fetch(API_LEAGUE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'set-current-month', leagueId, month: monthKey }),
+  });
+  const res = await r.json();
+  if (!res.ok) { toastErr(res.error || 'Failed'); return; }
+  toastOk(`Current month set to ${monthKey}`);
+  await refreshLeague();
+  renderActiveTab();
+}
+
 async function clearStaleDraft(leagueId) {
   if (!await confirmDialog('Clear the stale draft data? This will fix the "Draft in progress" banner. No roster data will be affected.')) return;
   const r = await fetch(API_DRAFT, {
@@ -3944,14 +4015,17 @@ async function forceResetDraft(leagueId) {
 async function submitOpenDraft(leagueId) {
   const err = document.getElementById('open-draft-err');
   err.textContent = '';
-  const draftType = document.getElementById('draft-type').value;
-  const rounds    = parseInt(document.getElementById('draft-rounds').value) || 6;
-  const order     = [...document.querySelectorAll('.draft-order-row')].map(r => r.dataset.mgr);
+  const draftMonth = document.getElementById('draft-month-month')?.value;
+  const draftYear  = document.getElementById('draft-month-year')?.value;
+  const month      = draftMonth && draftYear ? `${draftMonth}-${draftYear}` : null;
+  const draftType  = document.getElementById('draft-type').value;
+  const rounds     = parseInt(document.getElementById('draft-rounds').value) || 6;
+  const order      = [...document.querySelectorAll('.draft-order-row')].map(r => r.dataset.mgr);
   try {
     const r = await fetch(API_DRAFT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ action: 'open', leagueId, draftType, rounds, order }),
+      body: JSON.stringify({ action: 'open', leagueId, draftType, rounds, order, month }),
     });
     const res = await r.json();
     if (!res.ok) {
@@ -3962,7 +4036,7 @@ async function submitOpenDraft(leagueId) {
       }
       return;
     }
-    window._draftFullPool = null; // clear any stale pool from a prior closed draft
+    window._draftFullPool = null;
     await loadDraftState(document.getElementById('tab-body'), { fullPool: true });
   } catch (e) {
     err.textContent = 'Connection failed';
@@ -5035,7 +5109,29 @@ function renderSettings(body) {
   }
 
   if (isCommish) {
+    const MONTHS_LIST = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const years = [2025, 2026, 2027];
     html += `
+      <div class="panel" style="margin-bottom:14px">
+        <div class="panel-header">📅 Current scoring month</div>
+        <div class="panel-body">
+          <p class="input-help" style="margin-bottom:12px">
+            The active month for HR tracking. All roster HRs accumulate here.
+            Currently: <strong>${escapeHtml(league.currentMonth)}</strong>
+          </p>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select class="select" id="set-month-month" style="font-size:13px">
+              ${MONTHS_LIST.map(m => `<option value="${m}" ${league.currentMonth?.startsWith(m) ? 'selected' : ''}>${m}</option>`).join('')}
+            </select>
+            <select class="select" id="set-month-year" style="font-size:13px;width:90px">
+              ${years.map(y => `<option value="${y}" ${league.currentMonth?.endsWith(String(y)) ? 'selected' : ''}>${y}</option>`).join('')}
+            </select>
+            <button class="btn btn-sm btn-ghost" onclick="setCurrentMonth('${escapeAttr(league.id)}')">Update month</button>
+          </div>
+          <p class="input-help" style="margin-top:8px;color:var(--orange)">⚠ Changing the month creates a new roster bucket. Existing HR data stays in the old month.</p>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header" style="justify-content:space-between">
           <span>Invite link</span>
