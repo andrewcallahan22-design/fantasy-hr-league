@@ -445,25 +445,26 @@ export default async (req) => {
     league.currentMonth = targetMonth;
     for (const m of (body.deleteMonths || [])) delete league.months[m];
 
-    // Fix seasonBaseline so sync only adds HRs SINCE these restored values
-    // baseline = currentSeasonTotal - slot.hr
-    // Next sync: delta = currentSeasonTotal - baseline = slot.hr → no change
-    // When player hits new HR: delta = (currentSeasonTotal+1) - baseline = slot.hr+1 → adds 1 ✓
+    // Lock in the restored HR values using manualHr flag.
+    // Sync will see manualHr and use it directly, ignoring baseline math entirely.
+    // Also update seasonBaseline = currentSeasonTotal so future HRs add correctly
+    // after manualHr is cleared on first sync.
     if (!league.seasonBaseline) league.seasonBaseline = {};
+    if (!league.seasonHints) league.seasonHints = {};
+
+    // Force a fresh sync of seasonHints by clearing it for these players
+    // so the next sync fetches current MLB totals and anchors correctly
     for (const roster of Object.values(restoredRosters)) {
       for (const slot of roster) {
         if (!slot.player) continue;
         const nk = slot.player.toLowerCase().normalize('NFD')
           .replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim();
-        const currentSeasonTotal = league.seasonHints?.[nk];
-        if (currentSeasonTotal !== undefined) {
-          // This anchors the baseline so next sync delta = 0, preserving slot.hr
-          // Any future HR increments the season total and gets added correctly
-          league.seasonBaseline[nk] = currentSeasonTotal - slot.hr;
-        }
-        // Do NOT set manualHr — let sync add new HRs naturally from here
-        delete slot.manualHr;
-        delete slot.manualHrTs;
+        // Set manualHr so sync uses this exact value regardless of baseline
+        slot.manualHr = slot.hr;
+        slot.manualHrTs = Date.now();
+        // Clear baseline so sync sets it fresh from MLB API on next run
+        // After that, future HRs will add correctly as deltas
+        delete league.seasonBaseline[nk];
       }
     }
 
