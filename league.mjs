@@ -487,6 +487,9 @@ export default async (req) => {
       }
     }
 
+    // Block sync for 60 seconds to prevent race condition where sync
+    // runs immediately and overwrites the restored baselines
+    league.lastSyncStartedAt = Date.now();
     await saveLeague(league);
     return Response.json({ ok: true, month: targetMonth, managers: Object.keys(restoredRosters) }, { headers: NO_CACHE });
   }
