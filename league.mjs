@@ -445,26 +445,45 @@ export default async (req) => {
     league.currentMonth = targetMonth;
     for (const m of (body.deleteMonths || [])) delete league.months[m];
 
-    // Lock in the restored HR values using manualHr flag.
-    // Sync will see manualHr and use it directly, ignoring baseline math entirely.
-    // Also update seasonBaseline = currentSeasonTotal so future HRs add correctly
-    // after manualHr is cleared on first sync.
+    // Set exact baselines calculated from the raw dump's seasonHints.
+    // Formula: baseline = seasonHint - knownHR
+    // Result: sync delta = seasonHint - baseline = knownHR → slot.hr = knownHR ✓
+    // Future HR: delta increases by 1 → slot.hr increases by 1 ✓
+    const restoredBaselines = {
+      'junior caminero': 26, 'mike trout': 18, 'ben rice': 26, 'brooks lee': 14,
+      'juan soto': 20, 'ketel marte': 17,
+      'yordan alvarez': 29, 'colson montgomery': 23, 'james wood': 25,
+      'kazuma okamoto': 21, 'jj bleday': 14, 'willson contreras': 0,
+      'shohei ohtani': 20, 'hunter goodman': 27, 'nick kurtz': 27,
+      'manny machado': 18, 'brice turang': 12, 'gunnar henderson': 16,
+      'kyle schwarber': 32, 'matt olson': 24, 'jordan walker': 21,
+      'pete crow-armstrong': 21, 'brandon lowe': 0, 'casey schmitt': 11,
+    };
     if (!league.seasonBaseline) league.seasonBaseline = {};
+    for (const [nk, baseline] of Object.entries(restoredBaselines)) {
+      league.seasonBaseline[nk] = baseline;
+    }
+    // Also update seasonHints to match what we know
     if (!league.seasonHints) league.seasonHints = {};
-
-    // Force a fresh sync of seasonHints by clearing it for these players
-    // so the next sync fetches current MLB totals and anchors correctly
+    const restoredHints = {
+      'junior caminero': 28, 'mike trout': 18, 'ben rice': 29, 'brooks lee': 14,
+      'juan soto': 21, 'ketel marte': 17,
+      'yordan alvarez': 31, 'colson montgomery': 23, 'james wood': 27,
+      'kazuma okamoto': 22, 'jj bleday': 16, 'willson contreras': 0,
+      'shohei ohtani': 21, 'hunter goodman': 27, 'nick kurtz': 27,
+      'manny machado': 19, 'brice turang': 13, 'gunnar henderson': 17,
+      'kyle schwarber': 32, 'matt olson': 25, 'jordan walker': 22,
+      'pete crow-armstrong': 21, 'brandon lowe': 0, 'casey schmitt': 13,
+    };
+    for (const [nk, hint] of Object.entries(restoredHints)) {
+      league.seasonHints[nk] = hint;
+    }
+    // Set all slots to hr:0 — sync will add correct delta on next run
     for (const roster of Object.values(restoredRosters)) {
       for (const slot of roster) {
-        if (!slot.player) continue;
-        const nk = slot.player.toLowerCase().normalize('NFD')
-          .replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim();
-        // Set manualHr so sync uses this exact value regardless of baseline
-        slot.manualHr = slot.hr;
-        slot.manualHrTs = Date.now();
-        // Clear baseline so sync sets it fresh from MLB API on next run
-        // After that, future HRs will add correctly as deltas
-        delete league.seasonBaseline[nk];
+        slot.hr = 0;
+        delete slot.manualHr;
+        delete slot.manualHrTs;
       }
     }
 
