@@ -1116,6 +1116,35 @@ function showAdminToast(msg, type = 'success') {
   setTimeout(() => toast.remove(), 3500);
 }
 
+async function runPeavyRename() {
+  const result = document.getElementById('peavy-rename-result');
+  result.textContent = 'Running…';
+  result.style.color = '';
+  try {
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        action: 'rename-manager',
+        leagueId: 'splash-dragons-6a6e',
+        currentManagerName: 'Cali',
+        newName: 'Cal',
+      }),
+    });
+    const res = await r.json();
+    if (res.ok) {
+      result.textContent = '✓ Renamed Cali → Cal. Refresh the Peavy league to see the roster.';
+      result.style.color = 'var(--green)';
+    } else {
+      result.textContent = '✗ ' + (res.error || 'Failed');
+      result.style.color = 'var(--red)';
+    }
+  } catch(e) {
+    result.textContent = '✗ ' + e.message;
+    result.style.color = 'var(--red)';
+  }
+}
+
 async function runPeavyFix() {
   const result = document.getElementById('peavy-restore-result');
   result.textContent = 'Running…';
@@ -1297,11 +1326,11 @@ async function renderAdminDashboard() {
         </div>
       </div>
       <div class="notice warn" style="margin-bottom:16px">
-        <strong>🚨 Fix Peavy League Month</strong><br>
-        <span style="font-size:12px">Moves splash-dragons-6a6e rosters from August-2026 → July-2026. All HR data is preserved.</span>
+        <strong>🔧 Fix Peavy — Rename Cali → Cal</strong><br>
+        <span style="font-size:12px">Renames the roster key from 'Cali' to 'Cal' in splash-dragons-6a6e so Cal's roster shows correctly.</span>
         <div style="margin-top:8px">
-          <button class="btn btn-sm" style="background:rgba(239,68,68,0.2);color:var(--red);border:1px solid rgba(239,68,68,0.4)" onclick="runPeavyFix()">🔧 Fix Peavy League Month</button>
-          <span id="peavy-restore-result" style="font-size:12px;margin-left:10px"></span>
+          <button class="btn btn-sm" style="background:rgba(239,68,68,0.2);color:var(--red);border:1px solid rgba(239,68,68,0.4)" onclick="runPeavyRename()">🔧 Fix Cal Roster Key</button>
+          <span id="peavy-rename-result" style="font-size:12px;margin-left:10px"></span>
         </div>
       </div>
       <div id="admin-content"><p class="page-subtitle">Loading…</p></div>
@@ -1765,7 +1794,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607162031'; // updated on every deploy
+const APP_VERSION = '202607162116'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
