@@ -1814,7 +1814,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607162137'; // updated on every deploy
+const APP_VERSION = '202607162141'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -4732,15 +4732,6 @@ function renderMySettings(body) {
               <input class="input compact" id="display-name-input" value="${escapeAttr(SESSION.displayName || '')}" maxlength="40" style="max-width:240px">
             </div>
             <div class="input-help">Your name across all leagues and notifications.</div>
-          </div>
-
-          <div class="field">
-            <label>Team name <span style="font-size:11px;color:var(--text-muted);font-weight:400">(this league only)</span></label>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <input class="input compact" id="team-name-display" value="${escapeAttr(CURRENT_LEAGUE?.myManager || '')}" maxlength="40" style="max-width:240px" disabled>
-              <span style="font-size:11px;color:var(--text-muted)">Set at join time — contact commissioner to change</span>
-            </div>
-            <div class="input-help">Your team name in ${escapeHtml(league.name)}. This is what appears on the scoreboard.</div>
           </div>
 
           <!-- HR emoji -->
