@@ -442,11 +442,14 @@ export default async (req) => {
     if (!league.months[targetMonth]) league.months[targetMonth] = {};
 
     // Set all slots to hr:0 so sync recalculates from existing baselines
+    // BUT preserve manualHr if caller set it (used to lock specific values)
     for (const roster of Object.values(restoredRosters)) {
       for (const slot of roster) {
-        slot.hr = 0;
-        delete slot.manualHr;
-        delete slot.manualHrTs;
+        if (slot.manualHr === undefined) {
+          slot.hr = 0;
+          delete slot.manualHrTs;
+        }
+        // If manualHr is set by caller, keep it — sync will use it directly
       }
     }
 

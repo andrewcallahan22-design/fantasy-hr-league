@@ -1121,55 +1121,59 @@ async function runPeavyFix() {
   result.textContent = 'Running…';
   result.style.color = '';
 
-  // Rosters from screenshot backup taken July 16, 2026
+  // Rosters with EXACT HR values from change log + manualHr to lock them in
+  // Ohtani: 1 HR (Jul 10), Wood: 1 HR (Jul 11), Langeliers: 1 HR (Jul 9)
+  // All others: 0 HR
+  const now = Date.now();
   const rosters = {
     '805Padre': [
-      { player: 'Kyle Schwarber',       team: 'PHI', position: 'DH',  hr: 0 },
-      { player: 'Junior Caminero',      team: 'TB',  position: '3B',  hr: 0 },
-      { player: 'Pete Crow-Armstrong',  team: 'CHC', position: 'CF',  hr: 0 },
-      { player: 'Jackson Chourio',      team: 'MIL', position: 'LF',  hr: 0 },
-      { player: 'Manny Machado',        team: 'SD',  position: '3B',  hr: 0 },
-      { player: 'Brandon Lowe',         team: 'PIT', position: '2B',  hr: 0 },
+      { player: 'Kyle Schwarber',       team: 'PHI', position: 'DH',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Junior Caminero',      team: 'TB',  position: '3B',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Pete Crow-Armstrong',  team: 'CHC', position: 'CF',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Jackson Chourio',      team: 'MIL', position: 'LF',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Manny Machado',        team: 'SD',  position: '3B',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Brandon Lowe',         team: 'PIT', position: '2B',  hr: 0, manualHr: 0, manualHrTs: now },
     ],
     'Cali': [
-      { player: 'Yordan Alvarez',  team: 'HOU', position: 'DH',  hr: 0 },
-      { player: 'Ben Rice',        team: 'NYY', position: '1B',  hr: 0 },
-      { player: 'Matt Olson',      team: 'ATL', position: '1B',  hr: 0 },
-      { player: 'Jordan Walker',   team: 'STL', position: 'RF',  hr: 0 },
-      { player: 'Miguel Vargas',   team: 'CHW', position: '3B',  hr: 0 },
-      { player: 'Ketel Marte',     team: 'ARI', position: '2B',  hr: 0 },
+      { player: 'Yordan Alvarez',  team: 'HOU', position: 'DH',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Ben Rice',        team: 'NYY', position: '1B',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Matt Olson',      team: 'ATL', position: '1B',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Jordan Walker',   team: 'STL', position: 'RF',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Miguel Vargas',   team: 'CHW', position: '3B',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Ketel Marte',     team: 'ARI', position: '2B',  hr: 0, manualHr: 0, manualHrTs: now },
     ],
     'King of Ling': [
-      { player: 'Hunter Goodman',    team: 'COL', position: 'C',   hr: 0 },
-      { player: 'Rafael Devers',     team: 'SFG', position: '1B',  hr: 0 },
-      { player: 'Juan Soto',         team: 'NYM', position: 'LF',  hr: 0 },
-      { player: 'Kazuma Okamoto',    team: 'TOR', position: '3B',  hr: 0 },
-      { player: 'Shea Langeliers',   team: 'ATH', position: 'C',   hr: 0 },
-      { player: 'Joc Pederson',      team: 'TEX', position: 'DH',  hr: 0 },
+      { player: 'Hunter Goodman',   team: 'COL', position: 'C',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Rafael Devers',    team: 'SFG', position: '1B', hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Juan Soto',        team: 'NYM', position: 'LF', hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Kazuma Okamoto',   team: 'TOR', position: '3B', hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Shea Langeliers',  team: 'ATH', position: 'C',  hr: 1, manualHr: 1, manualHrTs: now },
+      { player: 'Joc Pederson',     team: 'TEX', position: 'DH', hr: 0, manualHr: 0, manualHrTs: now },
     ],
     'Big Al Hits Dingers': [
-      { player: 'Shohei Ohtani',    team: 'LAD', position: 'TWP', hr: 0 },
-      { player: 'James Wood',       team: 'WSH', position: 'RF',  hr: 0 },
-      { player: 'Pete Alonso',      team: 'BAL', position: '1B',  hr: 0 },
-      { player: 'Mike Trout',       team: 'LAA', position: 'CF',  hr: 0 },
-      { player: 'Sal Stewart',      team: 'CIN', position: '1B',  hr: 0 },
-      { player: 'Dominic Canzone',  team: 'SEA', position: 'DH',  hr: 0 },
+      { player: 'Shohei Ohtani',   team: 'LAD', position: 'TWP', hr: 1, manualHr: 1, manualHrTs: now },
+      { player: 'James Wood',      team: 'WSH', position: 'RF',  hr: 1, manualHr: 1, manualHrTs: now },
+      { player: 'Pete Alonso',     team: 'BAL', position: '1B',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Mike Trout',      team: 'LAA', position: 'CF',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Sal Stewart',     team: 'CIN', position: '1B',  hr: 0, manualHr: 0, manualHrTs: now },
+      { player: 'Dominic Canzone', team: 'SEA', position: 'DH',  hr: 0, manualHr: 0, manualHrTs: now },
     ],
   };
 
   // Correct baselines: live - knownHR
   // Only 3 players had HRs (from change log): Ohtani(1), Wood(1), Langeliers(1)
-  // baseline = liveSeasonHR - knownJulyHR so sync delta = knownJulyHR ✓
+  // baseline = liveSeasonHR - knownJulyHR so sync delta = knownJulyHR
   const baselines = {
     'kyle schwarber': 32, 'junior caminero': 28, 'pete crow-armstrong': 21,
     'jackson chourio': 13, 'manny machado': 19, 'brandon lowe': 21,
     'yordan alvarez': 31, 'ben rice': 29, 'matt olson': 25,
     'jordan walker': 22, 'miguel vargas': 21, 'ketel marte': 17,
     'hunter goodman': 27, 'rafael devers': 19, 'juan soto': 21,
-    'kazuma okamoto': 22, 'shea langeliers': 20, // 21-1 → delta=1 ✓
+    'kazuma okamoto': 22,
+    'shea langeliers': 20,
     'joc pederson': 15,
-    'shohei ohtani': 21,  // 22-1 → delta=1 ✓
-    'james wood': 27,     // 28-1 → delta=1 ✓
+    'shohei ohtani': 21,
+    'james wood': 27,
     'pete alonso': 21, 'mike trout': 18, 'sal stewart': 19, 'dominic canzone': 13,
   };
 
@@ -1761,7 +1765,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607162021'; // updated on every deploy
+const APP_VERSION = '202607162031'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
