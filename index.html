@@ -327,7 +327,11 @@ body::before {
   border: 1px solid var(--panel-border-strong); border-radius: 5px;
   padding: 5px 6px; font-size: 13px;
   font-family: 'Roboto Mono', monospace; font-weight: 600;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
+.hr-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(240,199,94,0.2); }
+.hr-input.saving { border-color: var(--text-muted); opacity: 0.7; pointer-events: none; }
+.hr-input.saved  { border-color: var(--green); }
 .hr-input:disabled { opacity: 0.4; cursor: not-allowed; background: transparent; border-color: transparent; color: var(--text); font-weight: 700; }
 
 /* ── ONBOARDING CHECKLIST ── */
@@ -1112,6 +1116,48 @@ function showAdminToast(msg, type = 'success') {
   setTimeout(() => toast.remove(), 3500);
 }
 
+async function runPeavyFix() {
+  const result = document.getElementById('peavy-restore-result');
+  result.textContent = 'Running…';
+  result.style.color = '';
+  // The August rosters are correct — we just move them to July
+  // The emergency-restore action handles this: it writes rosters to July
+  // and deletes August. We pass the existing August rosters.
+  // First fetch the current league data to get the live August rosters
+  try {
+    const fetch1 = await fetch(API_LEAGUE + '?id=splash-dragons-6a6e', {
+      headers: authHeaders(), cache: 'no-store'
+    });
+    const data = await fetch1.json();
+    if (!data.ok) { result.textContent = '✗ Could not load Peavy league: ' + data.error; result.style.color='var(--red)'; return; }
+    const augustRosters = data.league?.months?.['August-2026']?.rosters;
+    if (!augustRosters) { result.textContent = '✗ No August-2026 data found'; result.style.color='var(--red)'; return; }
+
+    const r = await fetch(API_LEAGUE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        action: 'emergency-restore',
+        leagueId: 'splash-dragons-6a6e',
+        month: 'July-2026',
+        deleteMonths: ['August-2026'],
+        rosters: augustRosters,
+      }),
+    });
+    const res = await r.json();
+    if (res.ok) {
+      result.textContent = '✓ Peavy league moved to July-2026! All HR data preserved.';
+      result.style.color = 'var(--green)';
+    } else {
+      result.textContent = '✗ ' + (res.error || 'Failed');
+      result.style.color = 'var(--red)';
+    }
+  } catch(e) {
+    result.textContent = '✗ ' + e.message;
+    result.style.color = 'var(--red)';
+  }
+}
+
 async function runJeffRestore() {
   const result = document.getElementById('jeff-restore-result');
   result.textContent = 'Running…';
@@ -1192,6 +1238,14 @@ async function renderAdminDashboard() {
         <div style="margin-top:8px">
           <button class="btn btn-sm" style="background:rgba(239,68,68,0.2);color:var(--red);border:1px solid rgba(239,68,68,0.4)" onclick="runJeffRestore()">🔧 Restore Jeff League Now</button>
           <span id="jeff-restore-result" style="font-size:12px;margin-left:10px"></span>
+        </div>
+      </div>
+      <div class="notice warn" style="margin-bottom:16px">
+        <strong>🚨 Fix Peavy League Month</strong><br>
+        <span style="font-size:12px">Moves splash-dragons-6a6e rosters from August-2026 → July-2026. All HR data is preserved.</span>
+        <div style="margin-top:8px">
+          <button class="btn btn-sm" style="background:rgba(239,68,68,0.2);color:var(--red);border:1px solid rgba(239,68,68,0.4)" onclick="runPeavyFix()">🔧 Fix Peavy League Month</button>
+          <span id="peavy-restore-result" style="font-size:12px;margin-left:10px"></span>
         </div>
       </div>
       <div id="admin-content"><p class="page-subtitle">Loading…</p></div>
@@ -1655,7 +1709,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607130036'; // updated on every deploy
+const APP_VERSION = '202607162001'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -2694,7 +2748,7 @@ function renderRostersEdit(body) {
       <td class="right">
         ${(isCommish || isAdmin)
           ? `<input class="hr-input" type="number" min="0" value="${displayHR}"
-               onchange="editSlot('${escapeAttr(viewMgr)}',${i},'hr',this.value)"
+               oninput="editSlot('${escapeAttr(viewMgr)}',${i},'hr',this.value,this)"
                title="Click to edit" style="width:52px;text-align:right">`
           : `<span style="font-family:'Roboto Mono',monospace;font-weight:700">${displayHR}</span>`}
       </td>
@@ -3174,28 +3228,43 @@ async function submitWaiverClaim(mgr, slotIndex) {
   await refreshLeague();
   renderActiveTab();
 }
-async function editSlot(manager, slotIndex, field, value) {
-  const viewMonth = _rosterViewMonth || CURRENT_LEAGUE.league.currentMonth;
-  setSyncUI('loading', 'Saving…');
-  try {
-    const r = await fetch(API_LEAGUE, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', ...authHeaders()},
-      body: JSON.stringify({
-        action: 'save-state',
-        leagueId: CURRENT_LEAGUE.league.id,
-        edits: [{ manager, slotIndex, field, value }],
-        month: viewMonth,
-      }),
-    });
-    const res = await r.json();
-    if (!res.ok) { setSyncUI('err', res.error || 'Save failed'); return; }
-    const ts = new Date();
-    setSyncUI('live', '✓ Saved · ' + ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
-    await refreshLeague();
-  } catch (e) {
-    setSyncUI('err', 'Save failed');
-  }
+const _editSlotTimers = {};
+async function editSlot(manager, slotIndex, field, value, inputEl) {
+  // Debounce — cancel pending save for this slot, wait for typing to stop
+  const key = `${manager}-${slotIndex}-${field}`;
+  if (_editSlotTimers[key]) clearTimeout(_editSlotTimers[key]);
+
+  if (inputEl) { inputEl.classList.add('saving'); inputEl.classList.remove('saved'); }
+
+  _editSlotTimers[key] = setTimeout(async () => {
+    const viewMonth = _rosterViewMonth || CURRENT_LEAGUE?.league?.currentMonth;
+    try {
+      const r = await fetch(API_LEAGUE, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', ...authHeaders()},
+        body: JSON.stringify({
+          action: 'save-state',
+          leagueId: CURRENT_LEAGUE.league.id,
+          edits: [{ manager, slotIndex, field, value }],
+          month: viewMonth,
+        }),
+      });
+      const res = await r.json();
+      if (inputEl) {
+        inputEl.classList.remove('saving');
+        if (res.ok) {
+          inputEl.classList.add('saved');
+          setTimeout(() => inputEl?.classList.remove('saved'), 1500);
+        } else {
+          toastErr(res.error || 'Save failed');
+        }
+      }
+      if (res.ok) setSyncUI('live', '✓ Saved');
+    } catch(e) {
+      if (inputEl) inputEl.classList.remove('saving');
+      toastErr('Save failed: ' + e.message);
+    }
+  }, 400);
 }
 
 async function refreshLeague() {
@@ -4553,10 +4622,20 @@ function renderMySettings(body) {
           </div>
 
           <div class="field">
-            <label>Display name</label>
+            <label>Display name <span style="font-size:11px;color:var(--text-muted);font-weight:400">(account-wide)</span></label>
             <div style="display:flex;gap:8px;align-items:center">
               <input class="input compact" id="display-name-input" value="${escapeAttr(SESSION.displayName || '')}" maxlength="40" style="max-width:240px">
             </div>
+            <div class="input-help">Your name across all leagues and notifications.</div>
+          </div>
+
+          <div class="field">
+            <label>Team name <span style="font-size:11px;color:var(--text-muted);font-weight:400">(this league only)</span></label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input class="input compact" id="team-name-display" value="${escapeAttr(CURRENT_LEAGUE?.myManager || '')}" maxlength="40" style="max-width:240px" disabled>
+              <span style="font-size:11px;color:var(--text-muted)">Set at join time — contact commissioner to change</span>
+            </div>
+            <div class="input-help">Your team name in ${escapeHtml(league.name)}. This is what appears on the scoreboard.</div>
           </div>
 
           <!-- HR emoji -->
@@ -4577,15 +4656,16 @@ function renderMySettings(body) {
 
           <!-- Rival notification message -->
           <div class="field">
-            <label>Trash talk notification 😈</label>
+            <label>Trash talk notification 😈 <span style="font-size:11px;color:var(--text-muted);font-weight:400">(this league only)</span></label>
             ${(() => {
               // Find this manager's per-league message from the member record
               const myMember = (league.members || []).find(m => m.email?.toLowerCase() === SESSION.email?.toLowerCase());
               const leagueMsg = myMember?.rivalMessage ?? null;
-              // Display: league-specific if set, else account default, else empty
-              const displayVal = leagueMsg !== null ? leagueMsg : (SESSION.rivalMessage || '');
+              // Only show league-specific message — never bleed in another league's message
+              // If no league message set, show empty so user knows they need to set one
+              const displayVal = leagueMsg !== null ? leagueMsg : '';
               const hasLeagueOverride = leagueMsg !== null && leagueMsg !== '';
-              const hasAccountDefault = SESSION.rivalMessage;
+              const hasAccountDefault = SESSION.rivalMessage && !hasLeagueOverride;
               return `
                 ${hasLeagueOverride ? `
                   <div id="rival-override-status" style="font-size:11px;color:var(--green);margin-bottom:6px">✓ Custom message set for <strong>${escapeHtml(league.name)}</strong></div>
@@ -4873,6 +4953,12 @@ async function saveProfile() {
       hrEmoji:      res.hrEmoji      !== undefined ? res.hrEmoji      : SESSION.hrEmoji,
       rivalMessage: res.rivalMessage !== undefined ? res.rivalMessage : SESSION.rivalMessage,
     });
+
+    // Refresh the current league view so name changes show immediately
+    // without requiring a manual page refresh
+    if (CURRENT_LEAGUE) {
+      renderLeagueShell();
+    }
 
     err.style.color = 'var(--green)';
     err.style.fontWeight = '600';
