@@ -440,45 +440,8 @@ export default async (req) => {
     const targetMonth = body.month || league.currentMonth;
     if (!restoredRosters) return Response.json({ ok: false, error: 'rosters required' });
     if (!league.months[targetMonth]) league.months[targetMonth] = {};
-    league.months[targetMonth].rosters = restoredRosters;
-    league.months[targetMonth].rostersLiveAt = league.draftClosedAt || Date.now();
-    league.currentMonth = targetMonth;
-    for (const m of (body.deleteMonths || [])) delete league.months[m];
 
-    // Set exact baselines calculated from the raw dump's seasonHints.
-    // Formula: baseline = seasonHint - knownHR
-    // Result: sync delta = seasonHint - baseline = knownHR → slot.hr = knownHR ✓
-    // Future HR: delta increases by 1 → slot.hr increases by 1 ✓
-    const restoredBaselines = {
-      'junior caminero': 26, 'mike trout': 18, 'ben rice': 26, 'brooks lee': 14,
-      'juan soto': 20, 'ketel marte': 17,
-      'yordan alvarez': 29, 'colson montgomery': 23, 'james wood': 25,
-      'kazuma okamoto': 21, 'jj bleday': 14, 'willson contreras': 0,
-      'shohei ohtani': 20, 'hunter goodman': 27, 'nick kurtz': 27,
-      'manny machado': 18, 'brice turang': 12, 'gunnar henderson': 16,
-      'kyle schwarber': 32, 'matt olson': 24, 'jordan walker': 21,
-      'pete crow-armstrong': 21, 'brandon lowe': 0, 'casey schmitt': 11,
-    };
-    if (!league.seasonBaseline) league.seasonBaseline = {};
-    for (const [nk, baseline] of Object.entries(restoredBaselines)) {
-      league.seasonBaseline[nk] = baseline;
-    }
-    // Also update seasonHints to match what we know
-    if (!league.seasonHints) league.seasonHints = {};
-    const restoredHints = {
-      'junior caminero': 28, 'mike trout': 18, 'ben rice': 29, 'brooks lee': 14,
-      'juan soto': 21, 'ketel marte': 17,
-      'yordan alvarez': 31, 'colson montgomery': 23, 'james wood': 27,
-      'kazuma okamoto': 22, 'jj bleday': 16, 'willson contreras': 0,
-      'shohei ohtani': 21, 'hunter goodman': 27, 'nick kurtz': 27,
-      'manny machado': 19, 'brice turang': 13, 'gunnar henderson': 17,
-      'kyle schwarber': 32, 'matt olson': 25, 'jordan walker': 22,
-      'pete crow-armstrong': 21, 'brandon lowe': 0, 'casey schmitt': 13,
-    };
-    for (const [nk, hint] of Object.entries(restoredHints)) {
-      league.seasonHints[nk] = hint;
-    }
-    // Set all slots to hr:0 — sync will add correct delta on next run
+    // Set all slots to hr:0 so sync recalculates from existing baselines
     for (const roster of Object.values(restoredRosters)) {
       for (const slot of roster) {
         slot.hr = 0;
@@ -487,8 +450,28 @@ export default async (req) => {
       }
     }
 
-    // Block sync for 60 seconds to prevent race condition where sync
-    // runs immediately and overwrites the restored baselines
+    league.months[targetMonth].rosters = restoredRosters;
+    league.months[targetMonth].rostersLiveAt = league.draftClosedAt || Date.now();
+    league.currentMonth = targetMonth;
+    for (const m of (body.deleteMonths || [])) delete league.months[m];
+
+    // If caller provides explicit baselines, use them (Jeff restore case)
+    // Otherwise use the league's existing seasonBaseline (Peavy case)
+    if (body.baselines) {
+      if (!league.seasonBaseline) league.seasonBaseline = {};
+      for (const [nk, baseline] of Object.entries(body.baselines)) {
+        league.seasonBaseline[nk] = baseline;
+      }
+    }
+    // If caller provides hints, update them
+    if (body.hints) {
+      if (!league.seasonHints) league.seasonHints = {};
+      for (const [nk, hint] of Object.entries(body.hints)) {
+        league.seasonHints[nk] = hint;
+      }
+    }
+
+    // Block sync for 60 seconds to prevent race condition
     league.lastSyncStartedAt = Date.now();
     await saveLeague(league);
     return Response.json({ ok: true, month: targetMonth, managers: Object.keys(restoredRosters) }, { headers: NO_CACHE });

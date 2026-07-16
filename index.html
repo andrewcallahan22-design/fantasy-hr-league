@@ -1120,19 +1120,60 @@ async function runPeavyFix() {
   const result = document.getElementById('peavy-restore-result');
   result.textContent = 'Running…';
   result.style.color = '';
-  // The August rosters are correct — we just move them to July
-  // The emergency-restore action handles this: it writes rosters to July
-  // and deletes August. We pass the existing August rosters.
-  // First fetch the current league data to get the live August rosters
-  try {
-    const fetch1 = await fetch(API_LEAGUE + '?id=splash-dragons-6a6e', {
-      headers: authHeaders(), cache: 'no-store'
-    });
-    const data = await fetch1.json();
-    if (!data.ok) { result.textContent = '✗ Could not load Peavy league: ' + data.error; result.style.color='var(--red)'; return; }
-    const augustRosters = data.league?.months?.['August-2026']?.rosters;
-    if (!augustRosters) { result.textContent = '✗ No August-2026 data found'; result.style.color='var(--red)'; return; }
 
+  // Rosters from screenshot backup taken July 16, 2026
+  const rosters = {
+    '805Padre': [
+      { player: 'Kyle Schwarber',       team: 'PHI', position: 'DH',  hr: 0 },
+      { player: 'Junior Caminero',      team: 'TB',  position: '3B',  hr: 0 },
+      { player: 'Pete Crow-Armstrong',  team: 'CHC', position: 'CF',  hr: 0 },
+      { player: 'Jackson Chourio',      team: 'MIL', position: 'LF',  hr: 0 },
+      { player: 'Manny Machado',        team: 'SD',  position: '3B',  hr: 0 },
+      { player: 'Brandon Lowe',         team: 'PIT', position: '2B',  hr: 0 },
+    ],
+    'Cali': [
+      { player: 'Yordan Alvarez',  team: 'HOU', position: 'DH',  hr: 0 },
+      { player: 'Ben Rice',        team: 'NYY', position: '1B',  hr: 0 },
+      { player: 'Matt Olson',      team: 'ATL', position: '1B',  hr: 0 },
+      { player: 'Jordan Walker',   team: 'STL', position: 'RF',  hr: 0 },
+      { player: 'Miguel Vargas',   team: 'CHW', position: '3B',  hr: 0 },
+      { player: 'Ketel Marte',     team: 'ARI', position: '2B',  hr: 0 },
+    ],
+    'King of Ling': [
+      { player: 'Hunter Goodman',    team: 'COL', position: 'C',   hr: 0 },
+      { player: 'Rafael Devers',     team: 'SFG', position: '1B',  hr: 0 },
+      { player: 'Juan Soto',         team: 'NYM', position: 'LF',  hr: 0 },
+      { player: 'Kazuma Okamoto',    team: 'TOR', position: '3B',  hr: 0 },
+      { player: 'Shea Langeliers',   team: 'ATH', position: 'C',   hr: 0 },
+      { player: 'Joc Pederson',      team: 'TEX', position: 'DH',  hr: 0 },
+    ],
+    'Big Al Hits Dingers': [
+      { player: 'Shohei Ohtani',    team: 'LAD', position: 'TWP', hr: 0 },
+      { player: 'James Wood',       team: 'WSH', position: 'RF',  hr: 0 },
+      { player: 'Pete Alonso',      team: 'BAL', position: '1B',  hr: 0 },
+      { player: 'Mike Trout',       team: 'LAA', position: 'CF',  hr: 0 },
+      { player: 'Sal Stewart',      team: 'CIN', position: '1B',  hr: 0 },
+      { player: 'Dominic Canzone',  team: 'SEA', position: 'DH',  hr: 0 },
+    ],
+  };
+
+  // Correct baselines: live - knownHR
+  // Only 3 players had HRs (from change log): Ohtani(1), Wood(1), Langeliers(1)
+  // baseline = liveSeasonHR - knownJulyHR so sync delta = knownJulyHR ✓
+  const baselines = {
+    'kyle schwarber': 32, 'junior caminero': 28, 'pete crow-armstrong': 21,
+    'jackson chourio': 13, 'manny machado': 19, 'brandon lowe': 21,
+    'yordan alvarez': 31, 'ben rice': 29, 'matt olson': 25,
+    'jordan walker': 22, 'miguel vargas': 21, 'ketel marte': 17,
+    'hunter goodman': 27, 'rafael devers': 19, 'juan soto': 21,
+    'kazuma okamoto': 22, 'shea langeliers': 20, // 21-1 → delta=1 ✓
+    'joc pederson': 15,
+    'shohei ohtani': 21,  // 22-1 → delta=1 ✓
+    'james wood': 27,     // 28-1 → delta=1 ✓
+    'pete alonso': 21, 'mike trout': 18, 'sal stewart': 19, 'dominic canzone': 13,
+  };
+
+  try {
     const r = await fetch(API_LEAGUE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -1141,12 +1182,13 @@ async function runPeavyFix() {
         leagueId: 'splash-dragons-6a6e',
         month: 'July-2026',
         deleteMonths: ['August-2026'],
-        rosters: augustRosters,
+        rosters,
+        baselines,
       }),
     });
     const res = await r.json();
     if (res.ok) {
-      result.textContent = '✓ Peavy league moved to July-2026! All HR data preserved.';
+      result.textContent = '✓ Peavy baselines fixed! Sync will add Ohtani(1), Wood(1), Langeliers(1) within 60 seconds.';
       result.style.color = 'var(--green)';
     } else {
       result.textContent = '✗ ' + (res.error || 'Failed');
@@ -1205,6 +1247,16 @@ async function runJeffRestore() {
         month: 'July-2026',
         deleteMonths: ['August-2026'],
         rosters,
+        baselines: {
+          'junior caminero': 26, 'mike trout': 18, 'ben rice': 26, 'brooks lee': 14,
+          'juan soto': 20, 'ketel marte': 17,
+          'yordan alvarez': 29, 'colson montgomery': 23, 'james wood': 25,
+          'kazuma okamoto': 21, 'jj bleday': 14, 'willson contreras': 20,
+          'shohei ohtani': 20, 'hunter goodman': 27, 'nick kurtz': 27,
+          'manny machado': 18, 'brice turang': 12, 'gunnar henderson': 16,
+          'kyle schwarber': 32, 'matt olson': 24, 'jordan walker': 21,
+          'pete crow-armstrong': 21, 'brandon lowe': 20, 'casey schmitt': 17,
+        },
       }),
     });
     const res = await r.json();
@@ -1709,7 +1761,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607162001'; // updated on every deploy
+const APP_VERSION = '202607162021'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
