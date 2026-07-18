@@ -1814,7 +1814,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607180357'; // updated on every deploy
+const APP_VERSION = '202607180406'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -3224,10 +3224,13 @@ async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, bloc
       }
     }
 
-    // Filter: only exclude players literally already on a roster
+    // Filter players based on rules
     _waiverPool = allPlayers.filter(p => {
       if (!p.name) return false;
       if (takenNames.has(normNameFE(p.name))) return false;
+      if (requiredTeam && p.team?.toUpperCase() !== requiredTeam.toUpperCase()) return false;
+      if (takenTeams.size && takenTeams.has(p.team?.toUpperCase())) return false;
+      if (blockedPositions.size && blockedPositions.has(p.pos)) return false;
       return true;
     });
 
