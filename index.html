@@ -1814,7 +1814,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607180353'; // updated on every deploy
+const APP_VERSION = '202607180357'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -2477,10 +2477,18 @@ function renderLeagueRulesCard(league, isCommish) {
   ];
 
   if (s.irSlots > 0) {
+    const irMode = s.irMode === 'swap'
+      ? 'When you move a player to IR, the replacement <strong>takes their spot permanently</strong> for the month.'
+      : 'When you move a player to IR, they <strong>hold their slot</strong> and can return when healthy.';
     const replText = s.irReplacementRule === 'same-team'
-      ? 'Replacement must be from <strong>the same MLB team</strong>.'
+      ? 'Replacement must be from <strong>the same MLB team</strong> as the injured player.'
+      : s.irReplacementRule === 'available-team-open-pos'
+      ? 'Replacement must be from an <strong>available team</strong> and fill an <strong>open position</strong> on your roster.'
       : 'Replacement can be <strong>any available player</strong>.';
-    rules.push({ icon: '🏥', label: 'IR slots', text: `Each manager has <strong>${s.irSlots} IR slot${s.irSlots>1?'s':''}</strong>. If one of your players lands on the MLB IL, you can move them to IR and add a temporary replacement. Their pre-injury HRs still count. ${replText}` });
+    const carryover = s.irHrCarryover === 'drop'
+      ? 'The injured player\'s pre-injury HRs <strong>do not count</strong>.'
+      : 'The injured player\'s pre-injury HRs <strong>still count</strong> toward your month total.';
+    rules.push({ icon: '🏥', label: 'IR slots', text: `Each manager has <strong>${s.irSlots} IR slot${s.irSlots>1?'s':''}</strong>. ${irMode} ${replText} ${carryover}` });
   }
   if (s.waiverType && s.waiverType !== 'none') {
     const wText = s.waiverType === 'waiver-order'
