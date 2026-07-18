@@ -1814,7 +1814,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607162141'; // updated on every deploy
+const APP_VERSION = '202607180353'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -3032,8 +3032,9 @@ function openWaiverClaim(mgr, slotIndex) {
   const { league } = CURRENT_LEAGUE;
   const month = league.months?.[league.currentMonth];
   const slot = month?.rosters?.[mgr]?.[slotIndex];
-  const irRule   = league.settings?.irReplacementRule || 'any-available';
-  const sameTeam = slot?.irPlayer && irRule === 'same-team';
+  const irRule      = league.settings?.irReplacementRule || 'any-available';
+  const sameTeam    = slot?.irPlayer && irRule === 'same-team';
+  const useTeamRule = slot?.irPlayer && irRule === 'available-team-open-pos';
   const positionRule = league.settings?.positionRule || 'one-duplicate-allowed';
 
   // Build set of all players/teams already on any roster
@@ -3095,7 +3096,8 @@ function openWaiverClaim(mgr, slotIndex) {
       <div style="padding:10px 16px;background:rgba(239,68,68,0.06);border-bottom:1px solid var(--panel-border);font-size:12px;color:var(--text-muted)">
         Temporary replacement for <strong style="color:var(--text)">${escapeHtml(slot?.irPlayer || '')}</strong>
         ${sameTeam ? ` · <span style="color:var(--accent)">Showing ${escapeHtml(slot?.irTeam || '')} players only (same-team rule)</span>` : ''}
-        ${blockedPositions.size ? ` · <span style="color:var(--orange)">Positions at limit: ${[...blockedPositions].join(', ')}</span>` : ''}
+        ${useTeamRule ? ` · <span style="color:var(--accent)">Available teams only · open positions only</span>` : ''}
+        ${(sameTeam || useTeamRule) && blockedPositions.size ? ` · <span style="color:var(--orange)">Positions at limit: ${[...blockedPositions].join(', ')}</span>` : ''}
       </div>
       <div style="padding:8px 16px;border-bottom:1px solid var(--panel-border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input class="input compact" id="waiver-search" placeholder="Filter by name or team…" style="flex:1;min-width:120px;max-width:200px" oninput="filterWaiverPool()">
@@ -3125,7 +3127,14 @@ function openWaiverClaim(mgr, slotIndex) {
     </div>
   `;
   document.body.appendChild(wrap);
-  loadWaiverPool(league, takenNames, takenTeams, sameTeam ? slot.irTeam : null, blockedPositions);
+  // Determine what to filter in loadWaiverPool based on IR rule:
+  // same-team: only show players from IR player's team, no position blocking
+  // available-team-open-pos: only available teams + blocked positions apply
+  // any-available: no team or position filtering
+  const poolTeamFilter    = sameTeam ? slot.irTeam : null;
+  const poolTakenTeams    = useTeamRule ? takenTeams : new Set();
+  const poolBlockedPos    = useTeamRule ? blockedPositions : new Set();
+  loadWaiverPool(league, takenNames, poolTakenTeams, poolTeamFilter, poolBlockedPos);
 }
 
 let _waiverPool = [];
@@ -5281,7 +5290,10 @@ function renderLeagueRules(body) {
   const irCarryover = s.irHrCarryover === 'drop' ? 'Injured player\'s pre-injury HRs do not count'
     : 'Injured player\'s pre-injury HRs still count toward the month total';
 
-  const irReplRule = s.irReplacementRule === 'same-team' ? 'Replacement must be from the same MLB team as the injured player'
+  const irReplRule = s.irReplacementRule === 'same-team'
+    ? 'Replacement must be from the same MLB team as the injured player'
+    : s.irReplacementRule === 'available-team-open-pos'
+    ? 'Replacement must be from an available team and fill an open position on your roster'
     : 'Any available player can fill the IR slot';
 
   const waiverText = !s.waiverType || s.waiverType === 'none' ? 'Disabled'
@@ -5529,6 +5541,7 @@ function renderSettings(body) {
               <label>IR replacement rule</label>
               <select class="select" id="set-irReplacementRule">
                 <option value="any-available" ${(s.irReplacementRule||'any-available')==='any-available' ? 'selected' : ''}>Any available player</option>
+                <option value="available-team-open-pos" ${s.irReplacementRule==='available-team-open-pos' ? 'selected' : ''}>Available team + open position on your roster</option>
                 <option value="same-team" ${s.irReplacementRule==='same-team' ? 'selected' : ''}>Must be from same MLB team as IR player</option>
               </select>
               <div class="input-help">Controls which players can fill in. "Same team" is stricter but keeps it interesting.</div>
