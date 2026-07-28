@@ -1814,7 +1814,7 @@ async function submitJoin(token) {
 }
 
 let CURRENT_LEAGUE = null;
-const APP_VERSION = '202607180406'; // updated on every deploy
+const APP_VERSION = '202607280326'; // updated on every deploy
 
 // ── TOAST NOTIFICATIONS ──
 // Replaces native alert() with non-blocking, mobile-friendly toasts.
@@ -2349,6 +2349,7 @@ function renderScoreboard(body) {
               <col><!-- Player: takes all remaining space -->
               <col style="width:36px"><!-- Pos -->
               <col style="width:40px"><!-- Team -->
+              <col style="width:62px"><!-- Next -->
               <col style="width:40px"><!-- +3d -->
               <col style="width:38px"><!-- HR -->
             </colgroup>
@@ -2357,6 +2358,7 @@ function renderScoreboard(body) {
                 <th>Player</th>
                 <th style="font-size:10px;padding:9px 4px">Pos</th>
                 <th style="font-size:10px;padding:9px 4px">Team</th>
+                <th style="font-size:10px;padding:9px 4px">Next</th>
                 <th class="right" style="font-size:10px;padding:9px 4px;white-space:nowrap">
                   <span title="Home runs hit by this player in the last 3 days — a quick read on who's been hot recently" style="cursor:help;border-bottom:1px dashed rgba(255,255,255,0.3)">+3d ⓘ</span>
                 </th>
@@ -2380,6 +2382,7 @@ function renderScoreboard(body) {
                     </td>
                     <td style="padding:6px 3px"><span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--blue);background:rgba(96,165,250,0.12);padding:1px 3px;border-radius:3px">${escapeHtml(p.swappedOutPosition||'—')}</span></td>
                     <td style="padding:6px 3px"><span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-muted);background:rgba(255,255,255,0.07);padding:1px 3px;border-radius:3px">${escapeHtml(p.swappedOutTeam||'—')}</span></td>
+                    <td style="padding:6px 4px"><span style="color:var(--text-faint);font-size:11px">—</span></td>
                     <td class="right" style="padding:6px 4px"><span style="color:var(--text-faint);font-size:11px">—</span></td>
                     <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700;color:var(--red);font-size:14px;padding:6px 6px">${parseInt(p.hrFromSwapped)||0}</td>
                   </tr>`);
@@ -2387,13 +2390,14 @@ function renderScoreboard(body) {
 
                 // Normal player row (or IR fill-in)
                 if (!p.player) {
-                  rows.push(`<tr><td colspan="5" style="color:var(--text-faint);font-style:italic;padding:9px 12px">— slot ${idx + 1} open —</td></tr>`);
+                  rows.push(`<tr><td colspan="6" style="color:var(--text-faint);font-style:italic;padding:9px 12px">— slot ${idx + 1} open —</td></tr>`);
                 } else {
                   const nk          = normName(p.player);
                   const streak      = league.streaks?.[nk];
                   const hr3d        = league.last24h?.[nk];
                   const seasonHint  = league.seasonHints?.[nk];
                   const health      = league.health?.[nk];
+                  const nextGame    = league.nextGame?.[nk];
                   const badge       = streakBadge(streak, p.player);
                   const healthBadge = health && health.status !== 'Active'
                     ? `<span title="${escapeAttr(health.detail || health.status)}" style="font-size:9px;font-weight:600;color:var(--red);background:rgba(239,68,68,0.12);padding:1px 5px;border-radius:3px;margin-left:4px;cursor:default">${escapeHtml(health.status)}</span>`
@@ -2417,6 +2421,7 @@ function renderScoreboard(body) {
                     <td style="padding:6px 3px">
                       <span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-muted);background:rgba(255,255,255,0.07);padding:1px 3px;border-radius:3px;white-space:nowrap">${escapeHtml(p.team || '—')}</span>
                     </td>
+                    <td style="padding:6px 4px">${nextGameBadge(nextGame)}</td>
                     <td class="right" style="padding:6px 4px">${hr3dCell}</td>
                     <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700;color:var(--text);font-size:14px;padding:6px 6px">${p.hr || 0}</td>
                   </tr>`);
@@ -2821,6 +2826,7 @@ function renderRostersEdit(body) {
       <th>Player</th>
       <th>Team</th>
       <th>Pos</th>
+      <th>Next</th>
       <th class="right">HR</th>
       ${canEdit ? '<th style="text-align:center"></th>' : ''}
     </tr></thead>
@@ -2854,10 +2860,13 @@ function renderRostersEdit(body) {
          </div>`
       : `<span style="color:var(--text-faint);font-size:13px">Empty slot</span>`;
 
+    const nextGame = p.player ? league.nextGame?.[normNameFE(p.player)] : null;
+
     html += `<tr>
       <td>${playerNameCell}</td>
       <td style="font-size:12px">${escapeHtml(p.team||'') || '—'}</td>
       <td style="font-size:12px">${escapeHtml(p.position||'') || '—'}</td>
+      <td>${p.player ? nextGameBadge(nextGame) : '<span style="color:var(--text-faint);font-size:11px">—</span>'}</td>
       <td class="right">
         ${(isCommish || isAdmin)
           ? `<input class="hr-input" type="number" min="0" value="${displayHR}"
@@ -3322,8 +3331,7 @@ function selectWaiverPlayer(player) {
 
 
 async function submitWaiverClaim(mgr, slotIndex) {
-  const err = document.getElementById('waiver-err');
-  if (!_waiverSelected) { if (err) err.textContent = 'Search for and select a player first'; return; }
+  if (!_waiverSelected) { toastErr('Search for and select a player first'); return; }
 
   const { name: pickupPlayer, team: pickupTeam, pos: pickupPos } = _waiverSelected;
   const btn = document.getElementById('waiver-confirm-btn');
@@ -3344,8 +3352,8 @@ async function submitWaiverClaim(mgr, slotIndex) {
   });
   const res = await r.json();
   if (!res.ok) {
-    if (err) err.textContent = res.error || 'Failed';
-    if (btn) { btn.disabled = false; btn.textContent = 'Confirm claim'; }
+    toastErr(res.error || 'Failed');
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm pickup'; }
     return;
   }
   _waiverSelected = null;
