@@ -26,6 +26,10 @@ function monthSortKey(k) {
   const [m, y] = k.split('-');
   return parseInt(y) * 12 + MONTHS.indexOf(m);
 }
+function monthKey(ts) {
+  const d = new Date(ts);
+  return `${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
+}
 function nextMonthKey(latest) {
   const [m, y] = latest.split('-');
   let mi = MONTHS.indexOf(m) + 1, yi = parseInt(y);
@@ -505,7 +509,13 @@ export default async (req) => {
         while (rosters[m].length < rs) rosters[m].push({ player: '', team: '', position: '', hr: 0 });
       }
       league.months[d.month] = { rosters };
-      league.currentMonth = d.month;
+      // Only go live immediately if the drafted month isn't in the future —
+      // a pre-draft for a future month (e.g. drafting August while July is
+      // still active) sits ready in league.months until the real calendar
+      // reaches it; runSyncForLeague() promotes it automatically at that point.
+      if (monthSortKey(d.month) <= monthSortKey(monthKey(Date.now()))) {
+        league.currentMonth = d.month;
+      }
       d.status = 'complete';
       d.completedAt = Date.now();
       draftJustCompleted = true;

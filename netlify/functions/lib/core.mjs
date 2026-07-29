@@ -8,6 +8,17 @@ export function normName(n) {
     .toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+const MONTHS = ['January','February','March','April','May','June','July','August',
+                'September','October','November','December'];
+function monthKey(ts) {
+  const d = new Date(ts);
+  return `${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
+}
+function monthSortKey(k) {
+  const [m, y] = k.split('-');
+  return parseInt(y) * 12 + MONTHS.indexOf(m);
+}
+
 const VERIFIED_IDS = {
   // AL East
   'aaron judge':          592450,
@@ -259,6 +270,21 @@ export async function runSyncForLeague(leagueId) {
       if (league.currentMonth && league.months?.[league.currentMonth]) {
         league.months[league.currentMonth].rostersLiveAt = league.draftClosedAt;
       }
+    }
+    await saveLeague(league);
+  }
+
+  // Auto-promote a pre-drafted future month once the real calendar reaches
+  // it — this is the only place currentMonth changes based on real time.
+  // A month can be pre-drafted while still in the future (see draft.mjs);
+  // it just sits in league.months waiting until its calendar month arrives.
+  const realMonth = monthKey(Date.now());
+  if (realMonth !== league.currentMonth && league.months?.[realMonth] &&
+      monthSortKey(realMonth) > monthSortKey(league.currentMonth)) {
+    console.log(`[sync:${leagueId}] Promoting pre-drafted month ${realMonth} to current`);
+    league.currentMonth = realMonth;
+    if (!league.months[realMonth].rostersLiveAt) {
+      league.months[realMonth].rostersLiveAt = Date.now();
     }
     await saveLeague(league);
   }

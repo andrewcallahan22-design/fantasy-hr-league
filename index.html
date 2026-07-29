@@ -1861,6 +1861,7 @@ let _pollTimer = null;
 async function renderLeague(leagueId, tab) {
   // Reset per-tab view state when switching tabs
   if (tab !== 'edit') { _rosterViewMgr = null; _rosterViewMonth = null; }
+  if (tab !== 'scoreboard') { _scoreboardViewMonth = null; }
   CURRENT_TAB = tab || 'scoreboard';
   document.getElementById('sync-btn').style.display = SESSION ? '' : 'none';
   setSyncUI('loading', 'Loading league…');
@@ -2224,8 +2225,17 @@ function nextGameBadge(ng) {
 
 function renderScoreboard(body) {
   const { league, isCommish } = CURRENT_LEAGUE;
-  const key = league.currentMonth;
+  const key = _scoreboardViewMonth || league.currentMonth;
   const month = league.months?.[key];
+  const isLiveMonth = key === league.currentMonth;
+
+  const allMonths = Object.keys(league.months || {}).sort((a,b) => monthSortKey(b) - monthSortKey(a)); // newest first
+  const monthLabel = m => m === league.currentMonth ? ' (current)' : (monthSortKey(m) > monthSortKey(league.currentMonth) ? ' (upcoming)' : '');
+  const monthSelector = allMonths.length > 1 ? `
+    <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderScoreboardWithOptions(document.getElementById('tab-body'), this.value)">
+      ${allMonths.map(m => `<option value="${escapeAttr(m)}" ${m===key?'selected':''}>${escapeHtml(m)}${monthLabel(m)}</option>`).join('')}
+    </select>
+  ` : '';
 
   // ── NO ACTIVE MONTH YET (brand new league, pre-draft) ──
   if (!month) {
@@ -2287,7 +2297,17 @@ function renderScoreboard(body) {
   // Has streak/3d data been populated by a sync yet?
   const has3d = league.last24h && Object.keys(league.last24h).length > 0;
 
-  let html = '<div class="stat-grid">';
+  let html = '';
+  if (monthSelector) {
+    html += `<div style="display:flex;justify-content:flex-end;margin-bottom:10px">${monthSelector}</div>`;
+  }
+  if (!isLiveMonth && monthSortKey(key) > monthSortKey(league.currentMonth)) {
+    const [keyMonthName, keyYear] = key.split('-');
+    html += `<div class="notice info" style="margin-bottom:12px">
+      📅 Rosters set — live starting ${escapeHtml(keyMonthName)} 1, ${escapeHtml(keyYear)}.
+    </div>`;
+  }
+  html += '<div class="stat-grid">';
   let rankCursor = 1;
   for (let i = 0; i < totals.length; i++) {
     const t = totals[i];
@@ -2435,6 +2455,15 @@ function renderScoreboard(body) {
     `;
   }
   body.innerHTML = html + renderLeagueRulesCard(league, CURRENT_LEAGUE.isCommish);
+}
+
+function renderScoreboardWithOptions(body, month) {
+  if (!body || typeof body.innerHTML === 'undefined') {
+    body = document.getElementById('tab-body');
+  }
+  if (!body) return;
+  _scoreboardViewMonth = month;
+  renderScoreboard(body);
 }
 
 // ── LEAGUE RULES CARD ──
@@ -2783,7 +2812,7 @@ function renderRostersEdit(body) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         ${allMonths.length > 1 ? `
           <select class="select" style="font-size:12px;padding:5px 10px" onchange="renderRostersWithOptions(document.getElementById('tab-body'), '${escapeAttr(viewMgr)}', this.value)">
-            ${allMonths.map(m => `<option value="${escapeAttr(m)}" ${m===viewMonth?'selected':''}>${escapeHtml(m)}${m===currentMonth?' (current)':''}</option>`).join('')}
+            ${allMonths.map(m => `<option value="${escapeAttr(m)}" ${m===viewMonth?'selected':''}>${escapeHtml(m)}${m===currentMonth?' (current)':(monthSortKey(m)>monthSortKey(currentMonth)?' (upcoming)':'')}</option>`).join('')}
           </select>
         ` : ''}
         ${(isCommish || isAdmin) && league.managers.length > 1 ? `
@@ -3454,6 +3483,7 @@ let _draftRosterMgr = null;
 let _draftQueue = [];
 let _rosterViewMgr = null;   // persists across re-renders
 let _rosterViewMonth = null; // persists across re-renders
+let _scoreboardViewMonth = null; // persists across re-renders
 
 function loadDraftQueue(leagueId) {
   try {
@@ -3801,11 +3831,13 @@ function renderDraftRoom(body) {
     const lastDraftDate = league.draftClosedAt
       ? new Date(league.draftClosedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
       : null;
+    const draftedMonthIsUpcoming = d.draft.month !== league.currentMonth && monthSortKey(d.draft.month) > monthSortKey(league.currentMonth);
     body.innerHTML = `
       <div class="notice success" style="margin-bottom:16px">
         ✓ Draft complete — rosters for <strong>${escapeHtml(d.draft.month)}</strong> have been set.
         ${lastDraftDate ? `<span style="font-size:12px;color:var(--text-muted);margin-left:12px">Completed ${escapeHtml(lastDraftDate)}</span>` : ''}
         ${isCommish ? `<button class="btn btn-sm btn-ghost" style="margin-left:12px" onclick="resetDraft('${escapeAttr(league.id)}')">Reset draft</button>` : ''}
+        ${draftedMonthIsUpcoming ? `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">📅 ${escapeHtml(league.currentMonth)} is still active — these rosters go live automatically on ${escapeHtml(d.draft.month.split('-')[0])} 1.</div>` : ''}
       </div>
       ${renderDraftLog(d.draft, league.managers)}
     `;
