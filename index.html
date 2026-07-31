@@ -680,6 +680,7 @@ const API_DRAFT  = '/.netlify/functions/draft';
 const API_PUSH   = '/.netlify/functions/push';
 const API_PLAYER = '/.netlify/functions/player';
 const API_ADMIN  = '/.netlify/functions/admin';
+const API_FEEDBACK = '/.netlify/functions/feedback';
 
 let SESSION = null;
 try { SESSION = JSON.parse(localStorage.getItem('fhr_v7_session')) || null; } catch(e){}
@@ -734,6 +735,17 @@ function renderAccountChip() {
   if (!chip || !btn) return;
   if (SESSION) {
     chip.innerHTML = escapeHtml(SESSION.displayName || SESSION.email);
+    let feedbackBtn = document.getElementById('feedback-nav-btn');
+    if (!feedbackBtn) {
+      feedbackBtn = document.createElement('button');
+      feedbackBtn.id = 'feedback-nav-btn';
+      feedbackBtn.className = 'admin-badge';
+      feedbackBtn.style.cssText = 'cursor:pointer;border:none;margin-left:6px;vertical-align:middle';
+      feedbackBtn.title = 'Send feedback or report a bug';
+      feedbackBtn.textContent = '💬 Feedback';
+      feedbackBtn.onclick = () => openFeedbackModal();
+      chip.parentNode.insertBefore(feedbackBtn, chip.nextSibling);
+    }
     if (SESSION.isAdmin) {
       // Add admin button as a sibling, not nested inside the chip text
       let adminBtn = document.getElementById('admin-nav-btn');
@@ -752,6 +764,7 @@ function renderAccountChip() {
   } else {
     chip.textContent = '';
     document.getElementById('admin-nav-btn')?.remove();
+    document.getElementById('feedback-nav-btn')?.remove();
     btn.textContent = 'Sign in';
   }
 }
@@ -1353,9 +1366,17 @@ async function renderAdminDashboard() {
           <span id="peavy-rename-result" style="font-size:12px;margin-left:10px"></span>
         </div>
       </div>
+      <div class="panel" style="margin-bottom:16px">
+        <div class="panel-header">💬 Feedback &amp; Bug Reports</div>
+        <div class="panel-body" id="admin-feedback-content" style="padding:0">
+          <p style="padding:16px;color:var(--text-muted);margin:0">Loading…</p>
+        </div>
+      </div>
       <div id="admin-content"><p class="page-subtitle">Loading…</p></div>
     </div>
   `;
+
+  loadAdminFeedback();
 
   try {
     const r = await fetch(`${API_ADMIN}?action=leagues`, { headers: authHeaders(), cache: 'no-store' });
@@ -1455,6 +1476,32 @@ async function renderAdminDashboard() {
   } catch (e) {
     document.getElementById('admin-content').innerHTML =
       `<div class="notice err">Failed to load: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadAdminFeedback() {
+  const el = document.getElementById('admin-feedback-content');
+  if (!el) return;
+  try {
+    const r = await fetch(`${API_ADMIN}?action=feedback`, { headers: authHeaders(), cache: 'no-store' });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error);
+    if (!data.feedback.length) {
+      el.innerHTML = '<p style="padding:16px;color:var(--text-muted);margin:0">No feedback submitted yet.</p>';
+      return;
+    }
+    el.innerHTML = data.feedback.map(f => `
+      <div style="padding:12px 16px;border-bottom:1px solid var(--panel-border)">
+        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+          <span style="font-size:12px;color:var(--accent);font-weight:600">${escapeHtml(f.email)}</span>
+          <span style="font-size:11px;color:var(--text-faint)">${new Date(f.t).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-dim);white-space:pre-wrap">${escapeHtml(f.message)}</div>
+        <div style="font-size:10px;color:var(--text-faint);margin-top:4px">${escapeHtml(f.url || '')}${f.leagueId ? ' · league: ' + escapeHtml(f.leagueId) : ''}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="notice err" style="margin:12px 16px">Failed to load feedback: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -1560,6 +1607,11 @@ async function renderMyLeagues() {
     list.innerHTML = `<div class="league-grid">${data.leagues.map(lg => `
       <button class="league-card ${lg.myStatus === 'pending' ? 'style="border-color:rgba(240,199,94,0.3);background:rgba(240,199,94,0.04)"' : ''}" onclick="navigate('/league/${encodeURIComponent(lg.id)}')">
         <div class="league-card-name">${escapeHtml(lg.name)}</div>
+        ${lg.isMyDraftTurn
+          ? `<div style="font-size:11px;font-weight:700;color:var(--accent);background:rgba(240,199,94,0.15);border:1px solid rgba(240,199,94,0.35);border-radius:4px;padding:3px 8px;display:inline-block;margin-bottom:6px">⚾ Your pick!</div>`
+          : lg.draftActive
+            ? `<div style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,0.06);border-radius:4px;padding:3px 8px;display:inline-block;margin-bottom:6px">⚾ Draft in progress</div>`
+            : ''}
         <div class="league-card-meta">
           ${lg.isCommissioner ? '<span class="league-card-status commish">Commissioner</span>' : ''}
           ${lg.myStatus === 'pending' ? `
@@ -1855,6 +1907,61 @@ function confirmDialog(msg) {
     overlay.querySelector('#confirm-cancel').onclick = () => { overlay.remove(); resolve(false); };
   });
 }
+
+function openFeedbackModal() {
+  document.getElementById('feedback-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.id = 'feedback-modal';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <div class="modal-title">💬 Feedback / report a bug</div>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="padding:16px">
+        <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">Found something broken, or have an idea? Tell us what happened — we can see what page you're on automatically.</p>
+        <textarea class="input" id="feedback-message" rows="5" placeholder="What's going on?" style="width:100%;resize:vertical;font-family:inherit"></textarea>
+        <div class="error" id="feedback-err" style="margin-top:6px"></div>
+      </div>
+      <div style="padding:12px 16px;border-top:1px solid var(--panel-border);display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        <button class="btn btn-primary" id="feedback-submit-btn" onclick="submitFeedback()">Send</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('feedback-message')?.focus(), 100);
+}
+
+async function submitFeedback() {
+  const textarea = document.getElementById('feedback-message');
+  const err = document.getElementById('feedback-err');
+  const btn = document.getElementById('feedback-submit-btn');
+  const message = (textarea?.value || '').trim();
+  if (!message) { if (err) err.textContent = 'Say something first!'; return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const r = await fetch(API_FEEDBACK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        message,
+        url: location.pathname,
+        leagueId: CURRENT_LEAGUE?.league?.id || null,
+      }),
+    });
+    const res = await r.json();
+    if (!res.ok) throw new Error(res.error || 'Failed to send');
+    document.getElementById('feedback-modal')?.remove();
+    toastOk('Thanks — feedback sent!');
+  } catch (e) {
+    if (err) err.textContent = e.message;
+    if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+  }
+}
+
 let CURRENT_TAB = 'scoreboard';
 let _pollTimer = null;
 
@@ -2253,7 +2360,7 @@ function renderScoreboard(body) {
                 ${[
                   ['📋', 'Set up your league rules', 'Go to the Commissioner tab → League Rules. Set roster size (how many players each team drafts), position rules, and team rules.'],
                   ['📨', 'Invite your managers', 'Share the invite link from the Commissioner tab. Managers sign up and you approve them.'],
-                  ['🏈', 'Open the draft', 'Once everyone\'s in, open the draft from the Draft tab. Each manager picks their hitters.'],
+                  ['⚾', 'Open the draft', 'Once everyone\'s in, open the draft from the Draft tab. Each manager picks their hitters.'],
                   ['⚾', 'Track home runs', 'Stats sync automatically every minute from the official MLB feed. Your players hit a HR, everyone knows instantly.'],
                 ].map(([icon, title, desc]) => `
                   <div style="display:flex;gap:12px;align-items:flex-start">
@@ -3672,7 +3779,10 @@ async function loadDraftState(body, { fullPool = false } = {}) {
     const mergedPool = basePool.map(p => {
       const norm = normName(p.name);
       const isPlayerDrafted = !!fresh.draftStatusByName?.[norm];
-      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team);
+      // Only treat a taken team as blocking when the league's team rule
+      // actually enforces uniqueness — 'unrestricted' leagues allow the
+      // same MLB team to appear on multiple rosters.
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team) && fresh.teamRule === 'all-unique';
       const draftedBy = isPlayerDrafted
         ? null // will be filled below from picks if needed
         : isTeamTaken
@@ -3718,7 +3828,10 @@ function startDraftPolling() {
       const mergedPool = basePool.map(p => {
         const norm = normName(p.name);
         const isPlayerDrafted = !!fresh.draftStatusByName?.[norm];
-        const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team);
+        // Only treat a taken team as blocking when the league's team rule
+      // actually enforces uniqueness — 'unrestricted' leagues allow the
+      // same MLB team to appear on multiple rosters.
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team) && fresh.teamRule === 'all-unique';
         return {
           ...p,
           drafted: isPlayerDrafted || isTeamTaken,
@@ -3951,6 +4064,7 @@ function renderDraftRoom(body) {
               <option value="ALL" ${_draftFilter.health === 'ALL' ? 'selected' : ''}>All Health</option>
               <option value="Active" ${_draftFilter.health === 'Active' ? 'selected' : ''}>Healthy only</option>
               <option value="IL" ${_draftFilter.health === 'IL' ? 'selected' : ''}>IL</option>
+              <option value="OTHER" ${_draftFilter.health === 'OTHER' ? 'selected' : ''}>Other (restricted/suspended/etc.)</option>
             </select>
           </div>
           <div style="display:flex;gap:4px">
@@ -4025,10 +4139,28 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
   // Get current manager's position counts for the "on clock" manager
   const onClockPosCounts = _draft?.mgrPosCounts?.[onClock] || {};
 
+  // Position rule check, computed once here so both the filter and the row
+  // renderer below use the same values. Applies to whoever is ON THE CLOCK,
+  // not the viewer — everyone sees the same "actually pickable right now"
+  // pool, whether it's your turn or you're watching someone else draft.
+  //   all-unique            → max 1 of any position
+  //   one-duplicate-allowed → max 2 of any position
+  //   unrestricted          → no limit, never blocked
+  const positionRule = _draft?.positionRule || 'one-duplicate-allowed';
+  const maxAllowed = positionRule === 'all-unique' ? 1
+    : positionRule === 'unrestricted' ? Infinity
+    : 2; // one-duplicate-allowed
+  const isPosBlocked = p => p.pos !== '?' && (onClockPosCounts[p.pos] || 0) >= maxAllowed;
+
   let filtered = pool.filter(p => {
+    // Hide drafted/team-taken (already respects teamRule — see loadDraftState)
+    // and position-ineligible players entirely, per the commissioner's rules.
+    if (p.drafted) return false;
+    if (isPosBlocked(p)) return false;
     if (_draftFilter.pos !== 'ALL' && p.pos !== _draftFilter.pos) return false;
     if (_draftFilter.team !== 'ALL' && p.team !== _draftFilter.team) return false;
-    if (_draftFilter.health !== 'ALL' && p.health !== _draftFilter.health) return false;
+    if (_draftFilter.health === 'OTHER' && (p.health === 'Active' || p.health === 'IL')) return false;
+    else if (_draftFilter.health !== 'ALL' && _draftFilter.health !== 'OTHER' && p.health !== _draftFilter.health) return false;
     if (search && !p.name.toLowerCase().includes(search)) return false;
     return true;
   });
@@ -4042,7 +4174,9 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
   // deduped by name so a player already in the pool isn't shown twice)
   if (search.length >= 2 && window._draftLiveSearchResults?.length) {
     const poolNames = new Set(filtered.map(p => normName(p.name)));
-    const extra = window._draftLiveSearchResults.filter(p => !poolNames.has(normName(p.name)));
+    const extra = window._draftLiveSearchResults.filter(p =>
+      !poolNames.has(normName(p.name)) && !p.drafted && !isPosBlocked(p)
+    );
     filtered = [...filtered, ...extra];
   }
 
@@ -4064,47 +4198,22 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
   }
 
   return filtered.slice(0, 300).map((p, i) => {
-    const isDrafted    = p.drafted;
-    const isTeamTaken  = p.teamTaken; // team taken by someone, not this specific player
-    const unavailable  = isDrafted;
-
-    // Check if this position would violate the on-clock manager's position rule.
-    // Reads the ACTUAL league setting rather than assuming "max 2":
-    //   all-unique          → max 1 of any position
-    //   one-duplicate-allowed → max 2 of any position
-    //   unrestricted        → no limit, never blocked
-    const posCount = onClockPosCounts[p.pos] || 0;
-    const positionRule = _draft?.positionRule || 'one-duplicate-allowed';
-    const maxAllowed = positionRule === 'all-unique' ? 1
-      : positionRule === 'unrestricted' ? Infinity
-      : 2; // one-duplicate-allowed
-    const posBlocked = isMyTurn && p.pos !== '?' && posCount >= maxAllowed;
-
-    const rowStyle = unavailable ? 'opacity:0.35;' : posBlocked ? 'opacity:0.6;' : '';
+    // Drafted/team-taken and position-ineligible players are already
+    // excluded above — every row reaching here is genuinely pickable.
     const healthColor = p.health === 'Active' ? 'var(--green)' : p.health === 'IL' ? 'var(--red)' : 'var(--orange)';
 
     let actionCell;
-    if (isDrafted) {
-      // Show who took it — or "Team taken" if it's a team conflict
-      const label = isTeamTaken
-        ? `<span style="font-size:9px;color:var(--orange)">Team: ${escapeHtml(p.draftedBy || '?')}</span>`
-        : `<span style="font-size:10px;color:var(--text-faint)">${escapeHtml(p.draftedBy || '✓')}</span>`;
-      actionCell = label;
-    } else if (posBlocked) {
-      actionCell = `<span style="font-size:9px;color:var(--red)">Pos full</span>`;
-    } else if (isMyTurn) {
+    if (isMyTurn) {
       actionCell = `<button class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:11px" onclick="makeDraftPickByIndex(${i})">Draft</button>`;
     } else {
       actionCell = `<button class="btn btn-sm btn-ghost" style="padding:3px 10px;font-size:11px" disabled>Draft</button>`;
     }
 
     const leagueId = CURRENT_LEAGUE?.league?.id || '';
-    const inQueue = !isDrafted && _draftQueue.some(q => normName(q.name) === normName(p.name));
-    const queueBtn = !isDrafted
-      ? `<button data-queue-idx="${i}" class="btn btn-sm ${inQueue ? 'btn-primary' : 'btn-ghost'}" style="padding:3px 6px;font-size:10px" onclick="addToQueue('${escapeAttr(leagueId)}',${i})" title="${inQueue ? 'Remove from queue' : 'Add to queue'}">${inQueue ? '✓Q' : '+Q'}</button>`
-      : '';
+    const inQueue = _draftQueue.some(q => normName(q.name) === normName(p.name));
+    const queueBtn = `<button data-queue-idx="${i}" class="btn btn-sm ${inQueue ? 'btn-primary' : 'btn-ghost'}" style="padding:3px 6px;font-size:10px" onclick="addToQueue('${escapeAttr(leagueId)}',${i})" title="${inQueue ? 'Remove from queue' : 'Add to queue'}">${inQueue ? '✓Q' : '+Q'}</button>`;
 
-    return `<tr style="${rowStyle}">
+    return `<tr>
       <td style="font-family:'Roboto Mono',monospace;font-size:10px;color:var(--text-faint);width:22px">${p.rank || i + 1}</td>
       <td>
         <button data-player="${escapeAttr(p.name)}" data-mlbid="${p.id || ''}" onclick="openPlayerProfile(this.dataset.player, this.dataset.mlbid||null)"
@@ -4112,8 +4221,8 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
           ${escapeHtml(p.name)}
         </button>
         <div style="display:flex;gap:3px;margin-top:2px">
-          <span class="team-chip" style="font-size:9px;${isTeamTaken ? 'text-decoration:line-through;opacity:0.5' : ''}">${escapeHtml(p.team)}</span>
-          <span class="pos-chip" style="font-size:9px;${posBlocked ? 'background:rgba(239,68,68,0.15);color:var(--red)' : ''}">${escapeHtml(p.pos)}</span>
+          <span class="team-chip" style="font-size:9px">${escapeHtml(p.team)}</span>
+          <span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos)}</span>
         </div>
       </td>
       <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:600;font-size:13px">${p.hr}</td>
@@ -4527,7 +4636,10 @@ async function silentDraftStateSync(leagueId) {
     const mergedPool = basePool.map(p => {
       const norm = normName(p.name);
       const isPlayerDrafted = !!fresh.draftStatusByName?.[norm];
-      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team);
+      // Only treat a taken team as blocking when the league's team rule
+      // actually enforces uniqueness — 'unrestricted' leagues allow the
+      // same MLB team to appear on multiple rosters.
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team) && fresh.teamRule === 'all-unique';
       return {
         ...p,
         drafted: isPlayerDrafted || isTeamTaken,

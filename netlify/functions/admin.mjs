@@ -72,6 +72,17 @@ export default async (req) => {
     return Response.json({ ok: true, league: lg }, { headers: NO_CACHE });
   }
 
+  // ── FEEDBACK SUBMISSIONS ──
+  if (req.method === 'GET' && action === 'feedback') {
+    const store = getStore('league');
+    const entries = (await store.get('feedback', { type: 'json' })) || [];
+    return Response.json({
+      ok: true,
+      feedback: [...entries].reverse(), // newest first
+      total: entries.length,
+    }, { headers: NO_CACHE });
+  }
+
   // ── POST ACTIONS ──
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));

@@ -1,8 +1,10 @@
 // Per-league diagnostics + push notification debug.
+// Commissioner (of this league) or site admin only.
 // GET ?leagueId=ID          → diagnostic dump for that league
 // GET ?leagueId=ID&push=1   → push subscription status for all members
 import { loadLeague, ensureLegacyMigrated } from './lib/storage.mjs';
 import { normName } from './lib/core.mjs';
+import { verifyAuth, isAdminEmail, isCommissioner } from './lib/auth.mjs';
 import { getStore } from '@netlify/blobs';
 
 const NO_CACHE = { 'Cache-Control': 'no-store' };
@@ -14,6 +16,11 @@ export default async (req) => {
   if (!leagueId) return Response.json({ ok: false, error: 'leagueId required' }, { status: 400 });
   const league = await loadLeague(leagueId);
   if (!league) return Response.json({ ok: false, error: 'League not found' }, { status: 404 });
+
+  const session = await verifyAuth(req);
+  if (!session || !(isAdminEmail(session.email) || isCommissioner(league, session.email))) {
+    return Response.json({ ok: false, error: 'Unauthorized' }, { status: 403, headers: NO_CACHE });
+  }
 
   // Raw dump — returns full league object for data recovery
   if (url.searchParams.get('raw') === '1') {

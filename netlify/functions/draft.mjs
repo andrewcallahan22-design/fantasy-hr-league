@@ -226,7 +226,7 @@ export default async (req) => {
         const hr = parseInt(seasonStat?.homeRuns) || 0;
         const team = TEAM_ABBR[p.currentTeam?.id] || p.currentTeam?.abbreviation || '?';
         const isPlayerDrafted = takenNorms.includes(normName(p.fullName));
-        const isTeamTaken = takenTeams.has(team);
+        const isTeamTaken = takenTeams.has(team) && (league.settings?.teamRule || 'all-unique') === 'all-unique';
         return {
           id: p.id,
           name: p.fullName,
@@ -272,8 +272,20 @@ export default async (req) => {
       try { pool = await fetchPlayerPool(); }
       catch (e) { poolError = e.message; }
 
-      // Build a name → HR map from the league's own stored roster data for
-      // basedOn month. Fast, accurate, no extra API call needed.
+      // Prefer the global monthly-HR cache (built by monthly-hr-cache.mjs) —
+      // real MLB HR totals for basedOn month, covering the full pool, not
+      // just players who happened to be rostered somewhere last month.
+      let globalMonthlyHR = null;
+      if (basedOn) {
+        try {
+          const cached = await getStore('league').get(`monthlyHR-${basedOn}`, { type: 'json' });
+          globalMonthlyHR = cached?.hr || null;
+        } catch {}
+      }
+
+      // Fallback: name → HR map from the league's own stored roster data for
+      // basedOn month. Only covers players who were actually rostered — used
+      // when the global cache is missing (e.g. hasn't run yet for this month).
       const prevMonthRosterHR = {};
       if (basedOn && league.months?.[basedOn]) {
         for (const mgr of (league.managers || [])) {
@@ -285,10 +297,14 @@ export default async (req) => {
           }
         }
       }
-      pool = pool.map(p => ({
-        ...p,
-        prevHR: prevMonthRosterHR[normName(p.name)] ?? p.prevHR ?? 0,
-      }));
+      pool = pool.map(p => {
+        const nk = normName(p.name);
+        const fromGlobalCache = globalMonthlyHR?.[nk];
+        return {
+          ...p,
+          prevHR: fromGlobalCache ?? prevMonthRosterHR[nk] ?? p.prevHR ?? 0,
+        };
+      });
     }
 
     const d = league.draft;
@@ -315,7 +331,7 @@ export default async (req) => {
     if (!stateOnly) {
       pool2 = pool.map(p => {
         const isPlayerDrafted = takenNorms.includes(normName(p.name));
-        const isTeamTaken     = takenTeams.has(p.team);
+        const isTeamTaken     = takenTeams.has(p.team) && (league.settings?.teamRule || 'all-unique') === 'all-unique';
         const draftedBy = isPlayerDrafted
           ? (picks.find(pk => normName(pk.player) === normName(p.name))?.mgr || null)
           : isTeamTaken

@@ -100,6 +100,12 @@ export default async (req) => {
       if (!lg) continue;
       const member = (lg.members || []).find(m => m.email?.toLowerCase() === session.email?.toLowerCase());
       if (!member) continue;
+      const draft = lg.draft;
+      const draftActive = draft?.status === 'active';
+      const onClock = draftActive
+        ? (draft.fullOrder ? draft.fullOrder[draft.picks.length] : draft.order?.[draft.picks.length % draft.order.length])
+        : null;
+
       mine.push({
         id: lg.id, name: lg.name, createdAt: lg.createdAt,
         myManager: member.manager,
@@ -107,6 +113,8 @@ export default async (req) => {
         isCommissioner: isCommissioner(lg, session.email),
         memberCount: (lg.members || []).filter(m => m.status === 'active').length,
         pendingCount: (lg.members || []).filter(m => m.status === 'pending').length,
+        draftActive,
+        isMyDraftTurn: draftActive && onClock === member.manager,
       });
     }
     return Response.json({ ok: true, leagues: mine }, { headers: NO_CACHE });
