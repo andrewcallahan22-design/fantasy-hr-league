@@ -262,14 +262,18 @@ export async function runSyncForLeague(leagueId) {
 
   // Auto-clear stale draft objects — if draft exists but status isn't 'active',
   // it's leftover data that causes the "Draft in progress" banner to show incorrectly.
+  // draftClosedAt must update on every completed draft, not just the league's
+  // very first one ever — a league completes a new draft every redraft period,
+  // and "Last draft completed" should reflect the most recent one, not be
+  // frozen at whenever this code first ran for that league.
   if (league.draft && league.draft.status !== 'active') {
     console.log(`[sync:${leagueId}] Clearing stale draft object (status: ${league.draft.status})`);
+    const completedMonth = league.draft.month;
+    const completedAt = league.draft.completedAt || Date.now();
     league.draft = null;
-    if (!league.draftClosedAt) {
-      league.draftClosedAt = Date.now();
-      if (league.currentMonth && league.months?.[league.currentMonth]) {
-        league.months[league.currentMonth].rostersLiveAt = league.draftClosedAt;
-      }
+    league.draftClosedAt = completedAt;
+    if (completedMonth && league.months?.[completedMonth]) {
+      league.months[completedMonth].rostersLiveAt = league.months[completedMonth].rostersLiveAt || completedAt;
     }
     await saveLeague(league);
   }

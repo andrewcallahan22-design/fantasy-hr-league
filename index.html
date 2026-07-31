@@ -1129,55 +1129,6 @@ function showAdminToast(msg, type = 'success') {
   setTimeout(() => toast.remove(), 3500);
 }
 
-async function runPeavyRename() {
-  const result = document.getElementById('peavy-rename-result');
-  result.textContent = 'Writing Cal roster…';
-  result.style.color = '';
-
-  // First fetch current rosters so we don't overwrite other managers
-  try {
-    const fetch1 = await fetch(API_LEAGUE + '?id=splash-dragons-6a6e', {
-      headers: authHeaders(), cache: 'no-store'
-    });
-    const data = await fetch1.json();
-    if (!data.ok) { result.textContent = '✗ ' + data.error; result.style.color='var(--red)'; return; }
-
-    // Get existing rosters and add Cal's missing roster
-    const existingRosters = data.league?.months?.['July-2026']?.rosters || {};
-    const now = Date.now();
-    existingRosters['Cal'] = [
-      { player: 'Yordan Alvarez', team: 'HOU', position: 'DH',  hr: 0, manualHr: 0, manualHrTs: now },
-      { player: 'Ben Rice',       team: 'NYY', position: '1B',  hr: 0, manualHr: 0, manualHrTs: now },
-      { player: 'Matt Olson',     team: 'ATL', position: '1B',  hr: 0, manualHr: 0, manualHrTs: now },
-      { player: 'Jordan Walker',  team: 'STL', position: 'RF',  hr: 0, manualHr: 0, manualHrTs: now },
-      { player: 'Miguel Vargas',  team: 'CHW', position: '3B',  hr: 0, manualHr: 0, manualHrTs: now },
-      { player: 'Ketel Marte',    team: 'ARI', position: '2B',  hr: 0, manualHr: 0, manualHrTs: now },
-    ];
-
-    const r = await fetch(API_LEAGUE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({
-        action: 'emergency-restore',
-        leagueId: 'splash-dragons-6a6e',
-        month: 'July-2026',
-        rosters: existingRosters,
-      }),
-    });
-    const res = await r.json();
-    if (res.ok) {
-      result.textContent = '✓ Cal roster added! Refresh the Peavy league.';
-      result.style.color = 'var(--green)';
-    } else {
-      result.textContent = '✗ ' + (res.error || 'Failed');
-      result.style.color = 'var(--red)';
-    }
-  } catch(e) {
-    result.textContent = '✗ ' + e.message;
-    result.style.color = 'var(--red)';
-  }
-}
-
 async function runPeavyFix() {
   const result = document.getElementById('peavy-restore-result');
   result.textContent = 'Running…';
@@ -1266,79 +1217,6 @@ async function runPeavyFix() {
   }
 }
 
-async function runJeffRestore() {
-  const result = document.getElementById('jeff-restore-result');
-  result.textContent = 'Running…';
-  const rosters = {
-    'Cali': [
-      { player: 'Junior Caminero',   team: 'TB',  position: '3B',  hr: 2 },
-      { player: 'Mike Trout',        team: 'LAA', position: 'CF',  hr: 0 },
-      { player: 'Ben Rice',          team: 'NYY', position: '1B',  hr: 3 },
-      { player: 'Brooks Lee',        team: 'MIN', position: 'SS',  hr: 0 },
-      { player: 'Juan Soto',         team: 'NYM', position: 'RF',  hr: 1 },
-      { player: 'Ketel Marte',       team: 'ARI', position: '2B',  hr: 0 },
-    ],
-    'Ding Dongers': [
-      { player: 'Yordan Alvarez',    team: 'HOU', position: 'DH',  hr: 2 },
-      { player: 'Colson Montgomery', team: 'CHW', position: 'SS',  hr: 0 },
-      { player: 'James Wood',        team: 'WSH', position: 'RF',  hr: 2 },
-      { player: 'Kazuma Okamoto',    team: 'TOR', position: '3B',  hr: 1 },
-      { player: 'JJ Bleday',         team: 'CIN', position: 'LF',  hr: 2 },
-      { player: 'Willson Contreras', team: 'BOS', position: '1B',  hr: 0 },
-    ],
-    'Prestige Worldwide': [
-      { player: 'Shohei Ohtani',     team: 'LAD', position: 'TWP', hr: 1 },
-      { player: 'Hunter Goodman',    team: 'COL', position: 'C',   hr: 0 },
-      { player: 'Nick Kurtz',        team: 'ATH', position: '1B',  hr: 0 },
-      { player: 'Manny Machado',     team: 'SD',  position: '3B',  hr: 1 },
-      { player: 'Brice Turang',      team: 'MIL', position: '2B',  hr: 1 },
-      { player: 'Gunnar Henderson',  team: 'BAL', position: 'SS',  hr: 1 },
-    ],
-    'SeaBassSaidThat?': [
-      { player: 'Kyle Schwarber',      team: 'PHI', position: 'DH',  hr: 0 },
-      { player: 'Matt Olson',          team: 'ATL', position: '1B',  hr: 1 },
-      { player: 'Jordan Walker',       team: 'STL', position: 'RF',  hr: 1 },
-      { player: 'Pete Crow-Armstrong', team: 'CHC', position: 'CF',  hr: 0 },
-      { player: 'Brandon Lowe',        team: 'PIT', position: '2B',  hr: 0 },
-      { player: 'Casey Schmitt',       team: 'SFG', position: '3B',  hr: 2 },
-    ],
-  };
-  try {
-    const r = await fetch(API_LEAGUE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({
-        action: 'emergency-restore',
-        leagueId: 'splash-hawks-818f',
-        month: 'July-2026',
-        deleteMonths: ['August-2026'],
-        rosters,
-        baselines: {
-          'junior caminero': 26, 'mike trout': 18, 'ben rice': 26, 'brooks lee': 14,
-          'juan soto': 20, 'ketel marte': 17,
-          'yordan alvarez': 29, 'colson montgomery': 23, 'james wood': 25,
-          'kazuma okamoto': 21, 'jj bleday': 14, 'willson contreras': 20,
-          'shohei ohtani': 20, 'hunter goodman': 27, 'nick kurtz': 27,
-          'manny machado': 18, 'brice turang': 12, 'gunnar henderson': 16,
-          'kyle schwarber': 32, 'matt olson': 24, 'jordan walker': 21,
-          'pete crow-armstrong': 21, 'brandon lowe': 20, 'casey schmitt': 17,
-        },
-      }),
-    });
-    const res = await r.json();
-    if (res.ok) {
-      result.textContent = '✓ Restored with exact HR counts! Cali:6 Dongers:7 Prestige:4 SeaBass:4 — sync will maintain from here.';
-      result.style.color = 'var(--green)';
-    } else {
-      result.textContent = '✗ ' + (res.error || 'Failed');
-      result.style.color = 'var(--red)';
-    }
-  } catch(e) {
-    result.textContent = '✗ ' + e.message;
-    result.style.color = 'var(--red)';
-  }
-}
-
 async function renderAdminDashboard() {
   const v = document.getElementById('view');
   v.innerHTML = `
@@ -1349,22 +1227,6 @@ async function renderAdminDashboard() {
           <p class="page-subtitle">All leagues on Go Yard — visible to you only.</p>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="navigate('/')">← Back</button>
-      </div>
-      <div class="notice warn" style="margin-bottom:16px">
-        <strong>🚨 Emergency Restore — Jeff League</strong><br>
-        <span style="font-size:12px">Restores all 4 rosters for splash-hawks-818f (July-2026). HR counts will be recalculated by sync within 60 seconds.</span>
-        <div style="margin-top:8px">
-          <button class="btn btn-sm" style="background:rgba(239,68,68,0.2);color:var(--red);border:1px solid rgba(239,68,68,0.4)" onclick="runJeffRestore()">🔧 Restore Jeff League Now</button>
-          <span id="jeff-restore-result" style="font-size:12px;margin-left:10px"></span>
-        </div>
-      </div>
-      <div class="notice warn" style="margin-bottom:16px">
-        <strong>🔧 Fix Peavy — Rename Cali → Cal</strong><br>
-        <span style="font-size:12px">Renames the roster key from 'Cali' to 'Cal' in splash-dragons-6a6e so Cal's roster shows correctly.</span>
-        <div style="margin-top:8px">
-          <button class="btn btn-sm" style="background:rgba(239,68,68,0.2);color:var(--red);border:1px solid rgba(239,68,68,0.4)" onclick="runPeavyRename()">🔧 Fix Cal Roster Key</button>
-          <span id="peavy-rename-result" style="font-size:12px;margin-left:10px"></span>
-        </div>
       </div>
       <div class="panel" style="margin-bottom:16px">
         <div class="panel-header">💬 Feedback &amp; Bug Reports</div>

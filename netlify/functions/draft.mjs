@@ -620,11 +620,9 @@ export default async (req) => {
       return Response.json({ ok: false, error: 'Only the commissioner can clear the draft' }, { status: 403 });
     }
     league.draft = null;
-    if (!league.draftClosedAt) {
-      league.draftClosedAt = Date.now();
-      if (league.currentMonth && league.months[league.currentMonth]) {
-        league.months[league.currentMonth].rostersLiveAt = Date.now();
-      }
+    league.draftClosedAt = Date.now();
+    if (league.currentMonth && league.months[league.currentMonth]) {
+      league.months[league.currentMonth].rostersLiveAt = league.months[league.currentMonth].rostersLiveAt || Date.now();
     }
     await saveLeague(league);
     return Response.json({ ok: true });
