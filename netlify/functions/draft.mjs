@@ -471,6 +471,9 @@ export default async (req) => {
     if (!d || d.status !== 'active') {
       return Response.json({ ok: false, error: 'No active draft' }, { status: 400 });
     }
+    if (d.paused) {
+      return Response.json({ ok: false, error: 'Draft is paused' }, { status: 400 });
+    }
     const pickIdx = d.picks.length;
     const onClock = d.fullOrder ? d.fullOrder[pickIdx] : d.order[pickIdx % d.order.length];
 

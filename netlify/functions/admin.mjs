@@ -87,6 +87,25 @@ export default async (req) => {
   if (req.method === 'POST') {
     const body = await req.json().catch(() => ({}));
 
+    // Pure currentMonth pointer flip — no roster data touched at all. For
+    // recovering a league that got auto-promoted to a month too early (e.g.
+    // the UTC-vs-Eastern timezone bug): both months already have real roster
+    // data, so the normal set-current-month action's merge/migrate logic
+    // would incorrectly overwrite one month's data with the other's. This
+    // just moves the pointer back, leaving every month bucket untouched.
+    if (body.action === 'set-current-month-only') {
+      const { leagueId, month } = body;
+      if (!leagueId || !month) {
+        return Response.json({ ok: false, error: 'leagueId and month required' }, { status: 400 });
+      }
+      const lg = await loadLeague(leagueId);
+      if (!lg) return Response.json({ ok: false, error: 'League not found' }, { status: 404 });
+      const from = lg.currentMonth;
+      lg.currentMonth = month;
+      await saveLeague(lg);
+      return Response.json({ ok: true, from, to: month }, { headers: NO_CACHE });
+    }
+
     // Approve all pending members in a league
     if (body.action === 'approve-all-pending') {
       const lg = await loadLeague(body.leagueId);

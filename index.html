@@ -1980,12 +1980,33 @@ function renderLeagueShell() {
     signInBanner = `<div class="notice info">Viewing as guest — <a href="#" onclick="openAuth('login','${escapeAttr(location.pathname)}');return false">sign in</a> to edit, sync, or make picks.</div>`;
   }
 
+  // Redraft reminder — only for the commissioner, only for monthly-cadence
+  // leagues, only in the last 2 days of the current real month, and only if
+  // next month hasn't already been (pre-)drafted. Mirrors the same check the
+  // backend uses to decide whether to send a one-time push notification.
+  let redraftBanner = '';
+  if (isCommish && (league.settings?.redraftCadence || 'monthly') === 'monthly') {
+    // Use US Eastern time (matches the backend's actual cutover timing) rather
+    // than the viewer's own local time — otherwise this banner could disagree
+    // with when the month actually turns over server-side.
+    const easternParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(new Date());
+    const eGet = t => parseInt(easternParts.find(p => p.type === t).value);
+    const eYear = eGet('year'), eMonth = eGet('month'), eDay = eGet('day');
+    const daysLeftInMonth = new Date(eYear, eMonth, 0).getDate() - eDay;
+    const nextMonth = nextMonthKey(league.currentMonth);
+    const nextMonthDrafted = !!league.months?.[nextMonth];
+    if (daysLeftInMonth <= 2 && !nextMonthDrafted) {
+      redraftBanner = `<div class="notice warn">⏰ ${escapeHtml(league.currentMonth.split('-')[0])} ends in ${daysLeftInMonth <= 0 ? 'less than a day' : daysLeftInMonth + ' day' + (daysLeftInMonth === 1 ? '' : 's')} — <a href="#" onclick="navigate('/league/${encodeURIComponent(league.id)}/draft');return false">open ${escapeHtml(nextMonth.split('-')[0])}'s draft</a> so rosters are ready when it starts.</div>`;
+    }
+  }
+
   v.innerHTML = `
     <div class="container">
       <h1 class="page-title">${escapeHtml(league.name)}</h1>
       <p class="page-subtitle">${league.managers.length} manager${league.managers.length === 1 ? '' : 's'} · ${league.currentMonth} ${isCommish ? '· <span style="color:var(--accent)">You are the commissioner</span>' : myManager ? `· Your team: ${escapeHtml(myManager)}` : ''}</p>
       ${pendingBanner}
       ${signInBanner}
+      ${redraftBanner}
       ${renderOnboardingChecklist()}
       <div class="tabs">
         ${tabs.map(t => `<button class="tab ${CURRENT_TAB === t.id ? 'active' : ''}" onclick="navigate('/league/${encodeURIComponent(league.id)}${t.id === 'scoreboard' ? '' : '/' + t.id}')">${t.label}</button>`).join('')}
@@ -2748,6 +2769,13 @@ function monthSortKey(key) {
   const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const [m, y] = key.split('-');
   return (parseInt(y) || 0) * 12 + MONTHS.indexOf(m);
+}
+function nextMonthKey(key) {
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const [m, y] = key.split('-');
+  let mi = MONTHS.indexOf(m) + 1, yi = parseInt(y);
+  if (mi > 11) { mi = 0; yi++; }
+  return `${MONTHS[mi]}-${yi}`;
 }
 
 
