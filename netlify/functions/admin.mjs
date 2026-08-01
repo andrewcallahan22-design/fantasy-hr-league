@@ -7,6 +7,7 @@
 
 import { listLeagues, loadLeague, saveLeague } from './lib/storage.mjs';
 import { verifyAuth, isAdminEmail } from './lib/auth.mjs';
+import { normName } from './lib/core.mjs';
 import { getStore } from '@netlify/blobs';
 
 const NO_CACHE = { 'Cache-Control': 'no-store' };
@@ -93,6 +94,32 @@ export default async (req) => {
     // data, so the normal set-current-month action's merge/migrate logic
     // would incorrectly overwrite one month's data with the other's. This
     // just moves the pointer back, leaving every month bucket untouched.
+    // Surgically set a specific roster slot's hr value — does NOT touch
+    // currentMonth, other players, or anything else. For reconciling HR
+    // credit after a data-correction incident (e.g. moving/zeroing HRs that
+    // got attributed to the wrong month's roster), where the blunt
+    // emergency-restore action (which force-sets currentMonth as a side
+    // effect) would be the wrong tool.
+    if (body.action === 'patch-roster-hr') {
+      const { leagueId, month, patches } = body;
+      if (!leagueId || !month || !Array.isArray(patches)) {
+        return Response.json({ ok: false, error: 'leagueId, month, patches[] required' }, { status: 400 });
+      }
+      const lg = await loadLeague(leagueId);
+      if (!lg) return Response.json({ ok: false, error: 'League not found' }, { status: 404 });
+      const results = [];
+      for (const { mgr, player, hr } of patches) {
+        const roster = lg.months?.[month]?.rosters?.[mgr];
+        const slot = roster?.find(s => normName(s.player) === normName(player));
+        if (!slot) { results.push({ mgr, player, ok: false, error: 'slot not found' }); continue; }
+        const from = slot.hr;
+        slot.hr = parseInt(hr) || 0;
+        results.push({ mgr, player, ok: true, from, to: slot.hr });
+      }
+      await saveLeague(lg);
+      return Response.json({ ok: true, results }, { headers: NO_CACHE });
+    }
+
     if (body.action === 'set-current-month-only') {
       const { leagueId, month } = body;
       if (!leagueId || !month) {
