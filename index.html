@@ -1986,13 +1986,14 @@ function renderLeagueShell() {
   // backend uses to decide whether to send a one-time push notification.
   let redraftBanner = '';
   if (isCommish && (league.settings?.redraftCadence || 'monthly') === 'monthly') {
-    // Use US Eastern time (matches the backend's actual cutover timing) rather
-    // than the viewer's own local time — otherwise this banner could disagree
-    // with when the month actually turns over server-side.
-    const easternParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(new Date());
-    const eGet = t => parseInt(easternParts.find(p => p.type === t).value);
-    const eYear = eGet('year'), eMonth = eGet('month'), eDay = eGet('day');
-    const daysLeftInMonth = new Date(eYear, eMonth, 0).getDate() - eDay;
+    // Use Hawaii time (matches the backend's actual cutover timing — the
+    // last US timezone to reach any given day) rather than the viewer's own
+    // local time, so this banner never disagrees with when the month
+    // actually turns over server-side.
+    const hstParts = new Intl.DateTimeFormat('en-US', { timeZone: 'Pacific/Honolulu', year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts(new Date());
+    const hGet = t => parseInt(hstParts.find(p => p.type === t).value);
+    const hYear = hGet('year'), hMonth = hGet('month'), hDay = hGet('day');
+    const daysLeftInMonth = new Date(hYear, hMonth, 0).getDate() - hDay;
     const nextMonth = nextMonthKey(league.currentMonth);
     const nextMonthDrafted = !!league.months?.[nextMonth];
     if (daysLeftInMonth <= 2 && !nextMonthDrafted) {

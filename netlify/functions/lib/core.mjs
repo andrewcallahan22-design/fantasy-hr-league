@@ -17,24 +17,27 @@ function monthKey(ts) {
 // Month-boundary checks (auto-promotion, redraft reminders) must NOT use raw
 // server UTC time — the server can be up to ~10 hours ahead of US Pacific,
 // which caused every league to flip to the new month hours before any real
-// US user's calendar actually turned over. Use US Eastern (MLB's own "game
-// day" reference timezone) instead — still imperfect for Pacific/Hawaii, but
-// eliminates the multi-hour-early promotion that raw UTC caused.
-function easternDateParts(ts) {
+// US user's calendar actually turned over, cutting off late West Coast games
+// mid-sync. Use Hawaii-Aleutian time (UTC-10, no DST) instead — the last US
+// timezone to reach any given day. The month only rolls over once it's
+// already ~2-3am on the US mainland's west coast, by which point even
+// extra-inning West Coast games have finished and synced. Not a mathematical
+// guarantee for every conceivable case, but eliminates the realistic ones.
+function lastTimezoneDateParts(ts) {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', year: 'numeric', month: 'numeric', day: 'numeric',
+    timeZone: 'Pacific/Honolulu', year: 'numeric', month: 'numeric', day: 'numeric',
   }).formatToParts(new Date(ts));
   const get = t => parseInt(parts.find(p => p.type === t).value);
   return { year: get('year'), month: get('month'), day: get('day') };
 }
-function easternMonthKey(ts) {
-  const { month, year } = easternDateParts(ts);
+function lastTimezoneMonthKey(ts) {
+  const { month, year } = lastTimezoneDateParts(ts);
   return `${MONTHS[month - 1]}-${year}`;
 }
-// Days remaining in the Eastern-time calendar month — used for the redraft
-// reminder threshold, same timezone reasoning as easternMonthKey above.
-function easternDaysLeftInMonth(ts) {
-  const { year, month, day } = easternDateParts(ts);
+// Days remaining in the reference-timezone calendar month — used for the
+// redraft reminder threshold, same timezone reasoning as above.
+function lastTimezoneDaysLeftInMonth(ts) {
+  const { year, month, day } = lastTimezoneDateParts(ts);
   const daysInMonth = new Date(year, month, 0).getDate(); // pure calendar math, no timezone involved
   return daysInMonth - day;
 }
@@ -312,7 +315,7 @@ export async function runSyncForLeague(leagueId) {
   // it — this is the only place currentMonth changes based on real time.
   // A month can be pre-drafted while still in the future (see draft.mjs);
   // it just sits in league.months waiting until its calendar month arrives.
-  const realMonth = easternMonthKey(Date.now());
+  const realMonth = lastTimezoneMonthKey(Date.now());
   if (realMonth !== league.currentMonth && league.months?.[realMonth] &&
       monthSortKey(realMonth) > monthSortKey(league.currentMonth)) {
     console.log(`[sync:${leagueId}] Promoting pre-drafted month ${realMonth} to current`);
@@ -330,7 +333,7 @@ export async function runSyncForLeague(leagueId) {
   // per target month, not every 3-minute sync cycle. Mirrors the same
   // in-app banner check in index.html's renderLeague.
   if ((league.settings?.redraftCadence || 'monthly') === 'monthly') {
-    const daysLeftInMonth = easternDaysLeftInMonth(Date.now());
+    const daysLeftInMonth = lastTimezoneDaysLeftInMonth(Date.now());
     const nextMonth = nextMonthKey(league.currentMonth);
     const nextMonthDrafted = !!league.months?.[nextMonth];
     if (daysLeftInMonth <= 2 && !nextMonthDrafted && league.redraftReminderSentFor !== nextMonth) {
