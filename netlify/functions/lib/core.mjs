@@ -181,10 +181,17 @@ async function fetchNextGame(league, playerName, teamAbbr) {
     const teamId = profile?.people?.[0]?.currentTeam?.id;
     if (!teamId) return null;
 
-    // Get schedule for today + tomorrow
-    const today = new Date().toISOString().slice(0, 10);
+    // Get schedule for yesterday through tomorrow. Using "yesterday" (not
+    // just "today") matters: raw UTC "today" can already be a new calendar
+    // day while a game that started last evening in US time is still live —
+    // querying from today onward would miss that game entirely and fall
+    // through to the next scheduled one instead (confirmed live tonight:
+    // a Giants game in progress was invisible to this query once the
+    // server's UTC date ticked over past midnight while it was still
+    // evening on the US west coast).
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-    const schedUrl = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${today}&endDate=${tomorrow}&teamId=${teamId}&hydrate=linescore`;
+    const schedUrl = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${yesterday}&endDate=${tomorrow}&teamId=${teamId}&hydrate=linescore`;
     const schedResp = await fetch(schedUrl);
     if (!schedResp.ok) return null;
     const sched = await schedResp.json();
