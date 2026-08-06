@@ -3063,7 +3063,9 @@ function normNameFE(s) {
 }
 
 async function moveToIR(mgr, slotIndex) {
-  if (!await confirmDialog(`Move this player to the IR slot? Their current HRs will be preserved. You can then pick up a replacement using the waiver wire.`)) return;
+  const slot = CURRENT_LEAGUE?.league?.months?.[CURRENT_LEAGUE.league.currentMonth]?.rosters?.[mgr]?.[slotIndex];
+  const playerName = slot?.player || 'this player';
+  if (!await confirmDialog(`Move ${playerName} to the IR slot? Their current HRs will be preserved. You can then pick up a replacement using the waiver wire.`)) return;
   const { isCommish } = CURRENT_LEAGUE;
   const r = await fetch(API_LEAGUE, {
     method: 'POST',
@@ -3078,12 +3080,15 @@ async function moveToIR(mgr, slotIndex) {
   });
   const res = await r.json();
   if (!res.ok) { toastErr(res.error); return; }
+  toastOk(`✓ ${playerName} moved to IR — pick up a replacement whenever you're ready.`);
   await refreshLeague();
   renderActiveTab();
 }
 
 async function returnFromIR(mgr, slotIndex) {
-  if (!await confirmDialog(`Return the IR player to the active lineup? The temporary replacement will be dropped.`)) return;
+  const slot = CURRENT_LEAGUE?.league?.months?.[CURRENT_LEAGUE.league.currentMonth]?.rosters?.[mgr]?.[slotIndex];
+  const playerName = slot?.irPlayer || 'this player';
+  if (!await confirmDialog(`Return ${playerName} to the active lineup? The temporary replacement will be dropped.`)) return;
   const r = await fetch(API_LEAGUE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -3091,6 +3096,7 @@ async function returnFromIR(mgr, slotIndex) {
   });
   const res = await r.json();
   if (!res.ok) { toastErr(res.error); return; }
+  toastOk(`✓ ${playerName} is back in the active lineup.`);
   await refreshLeague();
   renderActiveTab();
 }
@@ -3101,7 +3107,6 @@ function openWaiverClaim(mgr, slotIndex) {
   const slot = month?.rosters?.[mgr]?.[slotIndex];
   const irRule      = league.settings?.irReplacementRule || 'any-available';
   const sameTeam    = slot?.irPlayer && irRule === 'same-team';
-  const useTeamRule = slot?.irPlayer && irRule === 'available-team-open-pos';
   const positionRule = league.settings?.positionRule || 'one-duplicate-allowed';
 
   // Build set of all players/teams already on any roster
@@ -3163,8 +3168,8 @@ function openWaiverClaim(mgr, slotIndex) {
       <div style="padding:10px 16px;background:rgba(239,68,68,0.06);border-bottom:1px solid var(--panel-border);font-size:12px;color:var(--text-muted)">
         Temporary replacement for <strong style="color:var(--text)">${escapeHtml(slot?.irPlayer || '')}</strong>
         ${sameTeam ? ` · <span style="color:var(--accent)">Showing ${escapeHtml(slot?.irTeam || '')} players only (same-team rule)</span>` : ''}
-        ${useTeamRule ? ` · <span style="color:var(--accent)">Available teams only · open positions only</span>` : ''}
-        ${(sameTeam || useTeamRule) && blockedPositions.size ? ` · <span style="color:var(--orange)">Positions at limit: ${[...blockedPositions].join(', ')}</span>` : ''}
+        ${!sameTeam && (league.settings?.teamRule || 'all-unique') === 'all-unique' ? ` · <span style="color:var(--accent)">Teams already on a roster are excluded</span>` : ''}
+        ${blockedPositions.size ? ` · <span style="color:var(--orange)">Positions at limit: ${[...blockedPositions].join(', ')}</span>` : ''}
       </div>
       <div style="padding:8px 16px;border-bottom:1px solid var(--panel-border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input class="input compact" id="waiver-search" placeholder="Filter by name or team…" style="flex:1;min-width:120px;max-width:200px" oninput="filterWaiverPool()">
@@ -3194,13 +3199,17 @@ function openWaiverClaim(mgr, slotIndex) {
     </div>
   `;
   document.body.appendChild(wrap);
-  // Determine what to filter in loadWaiverPool based on IR rule:
-  // same-team: only show players from IR player's team, no position blocking
-  // available-team-open-pos: only available teams + blocked positions apply
-  // any-available: no team or position filtering
-  const poolTeamFilter    = sameTeam ? slot.irTeam : null;
-  const poolTakenTeams    = useTeamRule ? takenTeams : new Set();
-  const poolBlockedPos    = useTeamRule ? blockedPositions : new Set();
+  // League-wide teamRule and positionRule always apply, regardless of which
+  // irReplacementRule the league picked — those are separate concerns:
+  // irReplacementRule narrows WHICH team an IR replacement can come from;
+  // teamRule/positionRule govern whether a player is a legal roster addition
+  // at all. A pickup that violates the league's own roster rules was never
+  // "available" in the first place. same-team layers an extra restriction
+  // (must match the injured player's specific team) on top of that baseline.
+  const teamRule = league.settings?.teamRule || 'all-unique';
+  const poolTeamFilter = sameTeam ? slot.irTeam : null;
+  const poolTakenTeams = teamRule === 'all-unique' ? takenTeams : new Set();
+  const poolBlockedPos = blockedPositions;
   loadWaiverPool(league, takenNames, poolTakenTeams, poolTeamFilter, poolBlockedPos);
 }
 
@@ -3218,72 +3227,49 @@ async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, bloc
     const season = new Date().getFullYear();
     let allPlayers = [];
 
-    if (requiredTeam) {
-      // Same-team rule: fetch only that team's full roster
-      const teamsResp = await fetch(`https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${season}`);
-      const teamsData = await teamsResp.json();
-      const team = (teamsData.teams || []).find(t => t.abbreviation?.toUpperCase() === requiredTeam.toUpperCase());
-      if (team) {
-        const rosterResp = await fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/roster?rosterType=active&season=${season}&hydrate=person(stats(type=season,group=hitting))`);
-        const rosterData = await rosterResp.json();
-        allPlayers = (rosterData.roster || []).map(p => ({
-          name: p.person?.fullName || '',
-          team: requiredTeam,
-          pos:  p.position?.abbreviation || '?',
-          hr:   parseInt(p.person?.stats?.[0]?.splits?.[0]?.stat?.homeRuns) || 0,
-          prevHR: null,
-          id:   p.person?.id,
-        }));
-      }
-    } else {
-      // Any available player:
-      // Fetch full active rosters for all teams NOT already taken
-      // This gives managers the full bench of available players, not just HR leaders
-      const teamsResp = await fetch(`https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${season}`);
-      const teamsData = await teamsResp.json();
-      const allTeams = (teamsData.teams || []).filter(t => t.sport?.id === 1);
+    // Real season HR for every player comes from hydrating stats directly on
+    // each team's roster fetch — NOT from the "leaders" endpoint. That
+    // endpoint silently caps around the top ~100-150 hitters league-wide
+    // (confirmed: requesting limit=500 only ever returns players with
+    // double-digit HR totals), so anyone outside that tier — the majority of
+    // real waiver-wire players — always showed as 0 HR regardless of their
+    // actual total. Hydration gives the true number for every single player.
+    const teamsResp = await fetch(`https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${season}`);
+    const teamsData = await teamsResp.json();
+    const allTeams = (teamsData.teams || []).filter(t => t.sport?.id === 1);
 
-      // Teams still available = not taken by any manager
-      const availableTeams = allTeams.filter(t =>
-        !takenTeams.has(t.abbreviation?.toUpperCase())
-      );
+    const teamsToFetch = requiredTeam
+      ? allTeams.filter(t => t.abbreviation?.toUpperCase() === requiredTeam.toUpperCase())
+      : allTeams.filter(t => !takenTeams.has(t.abbreviation?.toUpperCase()));
 
-      if (listEl) listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Loading rosters from ${availableTeams.length} available teams…</div>`;
+    if (listEl) listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Loading rosters from ${teamsToFetch.length} team${teamsToFetch.length===1?'':'s'}…</div>`;
 
-      // Fetch season HR stats for all hitters in one call (for sorting)
-      let hrMap = {};
-      try {
-        const hrResp = await fetch(`https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=500`);
-        const hrData = await hrResp.json();
-        for (const l of (hrData?.leagueLeaders?.[0]?.leaders || [])) {
-          if (l?.person?.id) hrMap[l.person.id] = parseInt(l.value) || 0;
-        }
-      } catch {}
-
-      // Fetch active rosters for available teams in parallel batches
-      const BATCH = 8;
-      for (let i = 0; i < availableTeams.length; i += BATCH) {
-        const batch = availableTeams.slice(i, i + BATCH);
-        const results = await Promise.all(batch.map(async t => {
-          try {
-            const r = await fetch(`https://statsapi.mlb.com/api/v1/teams/${t.id}/roster?rosterType=active&season=${season}`);
-            if (!r.ok) return [];
-            const data = await r.json();
-            return (data.roster || []).map(p => ({
+    const BATCH = 8;
+    for (let i = 0; i < teamsToFetch.length; i += BATCH) {
+      const batch = teamsToFetch.slice(i, i + BATCH);
+      const results = await Promise.all(batch.map(async t => {
+        try {
+          const r = await fetch(`https://statsapi.mlb.com/api/v1/teams/${t.id}/roster?rosterType=active&season=${season}&hydrate=person(stats(type=season,group=hitting))`);
+          if (!r.ok) return [];
+          const data = await r.json();
+          return (data.roster || [])
+            .filter(p => p.position?.abbreviation !== 'P') // hitters only — this is a HR-only league
+            .map(p => ({
               name:   p.person?.fullName || '',
               team:   t.abbreviation || '?',
               pos:    p.position?.abbreviation || '?',
-              hr:     hrMap[p.person?.id] || 0,
+              hr:     parseInt(p.person?.stats?.[0]?.splits?.[0]?.stat?.homeRuns) || 0,
               prevHR: null,
               id:     p.person?.id,
             }));
-          } catch { return []; }
-        }));
-        allPlayers.push(...results.flat());
-      }
+        } catch { return []; }
+      }));
+      allPlayers.push(...results.flat());
     }
 
-    // Filter players based on rules
+    // Filter players based on rules — always applied regardless of the
+    // league's specific irReplacementRule, since teamRule/positionRule are
+    // league-wide roster rules, not something specific to one IR mode.
     _waiverPool = allPlayers.filter(p => {
       if (!p.name) return false;
       if (takenNames.has(normNameFE(p.name))) return false;
@@ -3408,6 +3394,7 @@ async function submitWaiverClaim(mgr, slotIndex) {
   }
   _waiverSelected = null;
   document.getElementById('waiver-modal')?.remove();
+  toastOk(`✓ ${pickupPlayer} added to your roster.`);
   await refreshLeague();
   renderActiveTab();
 }
