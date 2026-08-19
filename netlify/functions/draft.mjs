@@ -10,16 +10,20 @@
 import { getStore } from '@netlify/blobs';
 import { verifyAuth, isCommissioner, managerForUser } from './lib/auth.mjs';
 import { loadLeague, saveLeague, ensureLegacyMigrated } from './lib/storage.mjs';
-import { normName } from './lib/core.mjs';
+import { normName, normTeam } from './lib/core.mjs';
 
 const MONTHS = ['January','February','March','April','May','June','July','August',
                 'September','October','November','December'];
 
+// Matches MLB's own live API abbreviations exactly (verified directly
+// against /api/v1/teams) — previously said ARI/SFG/CHW here, which don't
+// match MLB's real AZ/SF/CWS, silently defeating team-uniqueness checks
+// whenever this table's value was compared against a live-API-sourced one.
 const TEAM_ABBR = {
-  108:'LAA',109:'ARI',110:'BAL',111:'BOS',112:'CHC',113:'CIN',114:'CLE',115:'COL',
+  108:'LAA',109:'AZ', 110:'BAL',111:'BOS',112:'CHC',113:'CIN',114:'CLE',115:'COL',
   116:'DET',117:'HOU',118:'KC', 119:'LAD',120:'WSH',121:'NYM',133:'ATH',134:'PIT',
-  135:'SD', 136:'SEA',137:'SFG',138:'STL',139:'TB', 140:'TEX',141:'TOR',142:'MIN',
-  143:'PHI',144:'ATL',145:'CHW',146:'MIA',147:'NYY',158:'MIL',
+  135:'SD', 136:'SEA',137:'SF', 138:'STL',139:'TB', 140:'TEX',141:'TOR',142:'MIN',
+  143:'PHI',144:'ATL',145:'CWS',146:'MIA',147:'NYY',158:'MIL',
 };
 
 function monthSortKey(k) {
@@ -219,14 +223,14 @@ export default async (req) => {
       const d = league.draft;
       const picks = d?.picks || [];
       const takenNorms = picks.map(p => normName(p.player));
-      const takenTeams = new Set(picks.filter(p => !p.skipped).map(p => p.team));
+      const takenTeams = new Set(picks.filter(p => !p.skipped).map(p => normTeam(p.team)));
 
       const results = people.map(p => {
         const seasonStat = p.stats?.find(s => s.group?.displayName === 'hitting')?.splits?.[0]?.stat;
         const hr = parseInt(seasonStat?.homeRuns) || 0;
         const team = TEAM_ABBR[p.currentTeam?.id] || p.currentTeam?.abbreviation || '?';
         const isPlayerDrafted = takenNorms.includes(normName(p.fullName));
-        const isTeamTaken = takenTeams.has(team) && (league.settings?.teamRule || 'all-unique') === 'all-unique';
+        const isTeamTaken = takenTeams.has(normTeam(team)) && (league.settings?.teamRule || 'all-unique') === 'all-unique';
         return {
           id: p.id,
           name: p.fullName,
@@ -240,7 +244,7 @@ export default async (req) => {
           draftedBy: isPlayerDrafted
             ? (picks.find(pk => normName(pk.player) === normName(p.fullName))?.mgr || null)
             : isTeamTaken
-              ? (picks.find(pk => pk.team === team && !pk.skipped)?.mgr || null)
+              ? (picks.find(pk => normTeam(pk.team) === normTeam(team) && !pk.skipped)?.mgr || null)
               : null,
           teamTaken: isTeamTaken && !isPlayerDrafted,
         };
@@ -310,7 +314,7 @@ export default async (req) => {
     const d = league.draft;
     const picks = d?.picks || [];
     const takenNorms  = picks.map(p => normName(p.player));
-    const takenTeams  = new Set(picks.filter(p => !p.skipped).map(p => p.team));
+    const takenTeams  = new Set(picks.filter(p => !p.skipped).map(p => normTeam(p.team)));
 
     // Per-manager position counts — used for position rule enforcement
     const mgrPosCounts = {};
@@ -331,11 +335,11 @@ export default async (req) => {
     if (!stateOnly) {
       pool2 = pool.map(p => {
         const isPlayerDrafted = takenNorms.includes(normName(p.name));
-        const isTeamTaken     = takenTeams.has(p.team) && (league.settings?.teamRule || 'all-unique') === 'all-unique';
+        const isTeamTaken     = takenTeams.has(normTeam(p.team)) && (league.settings?.teamRule || 'all-unique') === 'all-unique';
         const draftedBy = isPlayerDrafted
           ? (picks.find(pk => normName(pk.player) === normName(p.name))?.mgr || null)
           : isTeamTaken
-            ? (picks.find(pk => pk.team === p.team && !pk.skipped)?.mgr || null)
+            ? (picks.find(pk => normTeam(pk.team) === normTeam(p.team) && !pk.skipped)?.mgr || null)
             : null;
         return { ...p, drafted: isPlayerDrafted || isTeamTaken, draftedBy, teamTaken: isTeamTaken && !isPlayerDrafted };
       });
@@ -359,7 +363,7 @@ export default async (req) => {
       ...(stateOnly ? {} : { pool: pool2, poolError }),
       draftStatusByName,        // { normalizedPlayerName: true } for anyone drafted
       draftedTeamToManager: Object.fromEntries(
-        [...takenTeams].map(team => [team, picks.find(pk => pk.team === team && !pk.skipped)?.mgr || null])
+        [...takenTeams].map(team => [team, picks.find(pk => normTeam(pk.team) === team && !pk.skipped)?.mgr || null])
       ),
       rosterViews,
       mgrPosCounts,
@@ -497,8 +501,8 @@ export default async (req) => {
 
     // Team rule
     if (league.settings?.teamRule === 'all-unique') {
-      const allTeams = d.picks.map(p => p.team);
-      if (allTeams.includes(team)) {
+      const allTeams = d.picks.map(p => normTeam(p.team));
+      if (allTeams.includes(normTeam(team))) {
         return Response.json({ ok: false, error: `${team} is already taken — league uses unique-team rule` }, { status: 400 });
       }
     }
@@ -528,6 +532,29 @@ export default async (req) => {
         while (rosters[m].length < rs) rosters[m].push({ player: '', team: '', position: '', hr: 0 });
       }
       league.months[d.month] = { rosters };
+
+      // Log each pick as a transaction — same array the IR/waiver flow
+      // already logs to, so the Transactions tab can show one unified,
+      // chronological view of every player added to a roster, however it
+      // happened. Skipped-turn placeholders aren't real additions, so they're
+      // left out here.
+      if (!league.irTransactions) league.irTransactions = [];
+      const picksPerRound = d.order.length;
+      d.picks.forEach((p, i) => {
+        if (p.skipped) return;
+        league.irTransactions.push({
+          t: p.t || Date.now(),
+          mgr: p.mgr,
+          player: p.player,
+          team: p.team,
+          position: p.pos,
+          action: 'draft-pick',
+          month: d.month,
+          round: Math.floor(i / picksPerRound) + 1,
+          pickNumber: i + 1,
+        });
+      });
+
       // Only go live immediately if the drafted month isn't in the future —
       // a pre-draft for a future month (e.g. drafting August while July is
       // still active) sits ready in league.months until the real calendar

@@ -1953,6 +1953,7 @@ function renderLeagueShell() {
     { id: 'standings',   label: 'Standings' },
     { id: 'edit',        label: 'Roster' },
     { id: 'history',     label: 'History' },
+    { id: 'transactions', label: 'Transactions' },
     { id: 'draft',       label: 'Draft' },
     // League Rules visible to all signed-in members — read-only view of settings
     ...(SESSION ? [{ id: 'rules', label: '📋 Rules' }] : []),
@@ -2144,6 +2145,7 @@ function _renderActiveTabInner(body) {
   if (CURRENT_TAB === 'standings')   return renderStandings(body);
   if (CURRENT_TAB === 'edit')        return renderRostersEdit(body);
   if (CURRENT_TAB === 'history')     return renderHistory(body);
+  if (CURRENT_TAB === 'transactions') return renderTransactions(body);
   if (CURRENT_TAB === 'draft')       return renderDraft(body);
   if (CURRENT_TAB === 'rules')       return renderLeagueRules(body);
   if (CURRENT_TAB === 'my-settings') return renderMySettings(body);
@@ -3062,6 +3064,20 @@ function normNameFE(s) {
   return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z ]/g,'').replace(/\s+/g,' ').trim();
 }
 
+// Some code paths produce a team abbreviation from this app's own hardcoded
+// TEAM_ABBR table, others pull it straight from MLB's live API \u2014 and the two
+// disagree for 3 teams (verified against MLB's API directly): Arizona (ARI
+// vs real AZ), San Francisco (SFG vs real SF), Chicago White Sox (CHW vs
+// real CWS). Normalize at comparison time so team-uniqueness checks are safe
+// regardless of which form any given piece of code or stored data uses \u2014
+// this is exactly how two managers ended up with a White Sox player each
+// despite an all-unique team rule (see matching helper in lib/core.mjs).
+const TEAM_SYNONYMS_FE = { ARI: 'AZ', SFG: 'SF', CHW: 'CWS' };
+function normTeamFE(t) {
+  const up = String(t || '').trim().toUpperCase();
+  return TEAM_SYNONYMS_FE[up] || up;
+}
+
 async function moveToIR(mgr, slotIndex) {
   const slot = CURRENT_LEAGUE?.league?.months?.[CURRENT_LEAGUE.league.currentMonth]?.rosters?.[mgr]?.[slotIndex];
   const playerName = slot?.player || 'this player';
@@ -3117,8 +3133,8 @@ function openWaiverClaim(mgr, slotIndex) {
       if (p.player)   takenNames.add(normNameFE(p.player));
       if (p.irPlayer) takenNames.add(normNameFE(p.irPlayer));
       // Track taken teams so loadWaiverPool knows which teams are still available
-      if (p.team)   takenTeams.add(p.team.toUpperCase());
-      if (p.irTeam) takenTeams.add(p.irTeam.toUpperCase());
+      if (p.team)   takenTeams.add(normTeamFE(p.team));
+      if (p.irTeam) takenTeams.add(normTeamFE(p.irTeam));
     }
   }
 
@@ -3239,8 +3255,8 @@ async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, bloc
     const allTeams = (teamsData.teams || []).filter(t => t.sport?.id === 1);
 
     const teamsToFetch = requiredTeam
-      ? allTeams.filter(t => t.abbreviation?.toUpperCase() === requiredTeam.toUpperCase())
-      : allTeams.filter(t => !takenTeams.has(t.abbreviation?.toUpperCase()));
+      ? allTeams.filter(t => normTeamFE(t.abbreviation) === normTeamFE(requiredTeam))
+      : allTeams.filter(t => !takenTeams.has(normTeamFE(t.abbreviation)));
 
     if (listEl) listEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Loading rosters from ${teamsToFetch.length} team${teamsToFetch.length===1?'':'s'}…</div>`;
 
@@ -3273,8 +3289,8 @@ async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, bloc
     _waiverPool = allPlayers.filter(p => {
       if (!p.name) return false;
       if (takenNames.has(normNameFE(p.name))) return false;
-      if (requiredTeam && p.team?.toUpperCase() !== requiredTeam.toUpperCase()) return false;
-      if (takenTeams.size && takenTeams.has(p.team?.toUpperCase())) return false;
+      if (requiredTeam && normTeamFE(p.team) !== normTeamFE(requiredTeam)) return false;
+      if (takenTeams.size && takenTeams.has(normTeamFE(p.team))) return false;
       if (blockedPositions.size && blockedPositions.has(p.pos)) return false;
       return true;
     });
@@ -3477,6 +3493,83 @@ function renderHistory(body) {
   `;
 }
 
+// ── TRANSACTIONS ──
+// Unified, chronological view of every player added to a roster league-wide
+// — draft picks, waiver/free-agent pickups, and IR moves — pulled from
+// league.irTransactions (which despite the name is really a general roster-
+// transaction log; draft-pick entries get appended there at draft
+// completion, see draft.mjs). Distinct from the History tab, which only
+// logs HR *count* changes, not roster add/drop events.
+let _txnFilterMgr = 'ALL';
+let _txnFilterType = 'ALL';
+
+const TXN_TYPE_META = {
+  'draft-pick': { icon: '⚾', label: 'Drafted' },
+  'pickup':     { icon: '➕', label: 'Picked up' },
+  'move-to-ir': { icon: '🏥', label: 'Moved to IR' },
+};
+
+function renderTransactions(body) {
+  const { league } = CURRENT_LEAGUE;
+  const all = [...(league.irTransactions || [])].sort((a, b) => b.t - a.t);
+
+  const managers = league.managers || [];
+  const filtered = all.filter(e =>
+    (_txnFilterMgr === 'ALL' || e.mgr === _txnFilterMgr) &&
+    (_txnFilterType === 'ALL' || e.action === _txnFilterType)
+  );
+
+  const filterBar = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <select class="select" style="font-size:12px;padding:5px 10px" onchange="_txnFilterMgr=this.value;renderActiveTab()">
+        <option value="ALL" ${_txnFilterMgr==='ALL'?'selected':''}>All managers</option>
+        ${managers.map(m => `<option value="${escapeAttr(m)}" ${_txnFilterMgr===m?'selected':''}>${escapeHtml(m)}</option>`).join('')}
+      </select>
+      <select class="select" style="font-size:12px;padding:5px 10px" onchange="_txnFilterType=this.value;renderActiveTab()">
+        <option value="ALL" ${_txnFilterType==='ALL'?'selected':''}>All transaction types</option>
+        ${Object.entries(TXN_TYPE_META).map(([type, meta]) => `<option value="${type}" ${_txnFilterType===type?'selected':''}>${meta.icon} ${meta.label}</option>`).join('')}
+      </select>
+    </div>
+  `;
+
+  if (!all.length) {
+    body.innerHTML = `<div class="empty-state"><div class="empty-state-title">No transactions yet</div><div class="empty-state-body">Draft picks, waiver pickups, and IR moves will show up here as they happen.</div></div>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <div class="panel">
+      <div class="panel-header">Transactions · ${filtered.length} of ${all.length}</div>
+      <div class="panel-body">
+        ${filterBar}
+        ${!filtered.length ? `<div style="padding:20px;text-align:center;color:var(--text-faint);font-size:13px">No transactions match this filter.</div>` : `
+          <div class="history-list">
+            ${filtered.map(e => {
+              const meta = TXN_TYPE_META[e.action] || { icon: '•', label: e.action || 'Transaction' };
+              const d = new Date(e.t);
+              const detail = e.action === 'draft-pick'
+                ? `Round ${e.round}, Pick ${e.pickNumber}`
+                : e.action === 'pickup' && e.replacing
+                  ? `replacing ${escapeHtml(e.replacing)}`
+                  : '';
+              return `<div class="history-row">
+                <span class="history-when">${d.toLocaleDateString([],{month:'short',day:'numeric'})} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
+                <span style="flex:1;min-width:180px">
+                  <strong>${escapeHtml(e.player || '?')}</strong>
+                  ${e.team ? `<span style="color:var(--text-faint);font-size:11px"> · ${escapeHtml(e.team)}</span>` : ''}
+                  <span style="color:var(--text-muted)"> · ${escapeHtml(e.mgr)}</span>
+                  ${detail ? `<div style="font-size:11px;color:var(--text-faint);margin-top:1px">${detail}</div>` : ''}
+                </span>
+                <span class="history-src">${meta.icon} ${meta.label}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 // ── DRAFT ROOM ──
 // State lives in _draft (fetched from server), _draftFilter, _draftSort,
 // _draftRosterMgr (which manager's roster is shown in the right panel).
@@ -3660,11 +3753,11 @@ async function loadDraftState(body, { fullPool = false } = {}) {
       // Only treat a taken team as blocking when the league's team rule
       // actually enforces uniqueness — 'unrestricted' leagues allow the
       // same MLB team to appear on multiple rosters.
-      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team) && fresh.teamRule === 'all-unique';
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(normTeamFE(p.team)) && fresh.teamRule === 'all-unique';
       const draftedBy = isPlayerDrafted
         ? null // will be filled below from picks if needed
         : isTeamTaken
-          ? (fresh.draftedTeamToManager?.[p.team] || null)
+          ? (fresh.draftedTeamToManager?.[normTeamFE(p.team)] || null)
           : null;
       return {
         ...p,
@@ -3709,11 +3802,11 @@ function startDraftPolling() {
         // Only treat a taken team as blocking when the league's team rule
       // actually enforces uniqueness — 'unrestricted' leagues allow the
       // same MLB team to appear on multiple rosters.
-      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team) && fresh.teamRule === 'all-unique';
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(normTeamFE(p.team)) && fresh.teamRule === 'all-unique';
         return {
           ...p,
           drafted: isPlayerDrafted || isTeamTaken,
-          draftedBy: isPlayerDrafted ? findDraftedByName(fresh, p.name) : (isTeamTaken ? (fresh.draftedTeamToManager?.[p.team] || null) : null),
+          draftedBy: isPlayerDrafted ? findDraftedByName(fresh, p.name) : (isTeamTaken ? (fresh.draftedTeamToManager?.[normTeamFE(p.team)] || null) : null),
           teamTaken: isTeamTaken && !isPlayerDrafted,
         };
       });
@@ -3931,8 +4024,8 @@ function renderDraftRoom(body) {
           <div>
             <select class="select" style="padding:6px 8px;font-size:12px" onchange="setDraftFilter('team', this.value)">
               <option value="ALL">All Teams</option>
-              ${['ATH','ATL','BAL','BOS','CHC','CHW','CIN','CLE','COL','DET','HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','PHI','PIT','SD','SEA','SFG','STL','TB','TEX','TOR','WSH'].map(t => {
-                const taken = (_draft?.takenTeams || []).includes(t);
+              ${['ATH','ATL','AZ','BAL','BOS','CHC','CIN','CLE','COL','CWS','DET','HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','PHI','PIT','SD','SEA','SF','STL','TB','TEX','TOR','WSH'].map(t => {
+                const taken = (_draft?.takenTeams || []).includes(normTeamFE(t));
                 return `<option value="${t}" ${_draftFilter.team === t ? 'selected' : ''} ${taken ? 'disabled' : ''} style="${taken ? 'text-decoration:line-through;color:#6b7280;' : ''}">${taken ? '✕ ' : ''}${t}</option>`;
               }).join('')}
             </select>
@@ -4036,7 +4129,7 @@ function renderDraftPool(pool, isMyTurn, onClock, leagueId) {
     if (p.drafted) return false;
     if (isPosBlocked(p)) return false;
     if (_draftFilter.pos !== 'ALL' && p.pos !== _draftFilter.pos) return false;
-    if (_draftFilter.team !== 'ALL' && p.team !== _draftFilter.team) return false;
+    if (_draftFilter.team !== 'ALL' && normTeamFE(p.team) !== normTeamFE(_draftFilter.team)) return false;
     if (_draftFilter.health === 'OTHER' && (p.health === 'Active' || p.health === 'IL')) return false;
     else if (_draftFilter.health !== 'ALL' && _draftFilter.health !== 'OTHER' && p.health !== _draftFilter.health) return false;
     if (search && !p.name.toLowerCase().includes(search)) return false;
@@ -4419,7 +4512,7 @@ async function makeDraftPick(leagueId, player) {
       _draft.pool = _draft.pool.map(p =>
         normName(p.name) === normName(player.name)
           ? { ...p, drafted: true, draftedBy: onClock }
-          : p.team === player.team && !p.drafted
+          : normTeamFE(p.team) === normTeamFE(player.team) && !p.drafted
             ? { ...p, drafted: true, draftedBy: onClock, teamTaken: true }
             : p
       );
@@ -4429,7 +4522,7 @@ async function makeDraftPick(leagueId, player) {
       window._draftFullPool = window._draftFullPool.map(p =>
         normName(p.name) === normName(player.name)
           ? { ...p, drafted: true, draftedBy: onClock }
-          : p.team === player.team && !p.drafted
+          : normTeamFE(p.team) === normTeamFE(player.team) && !p.drafted
             ? { ...p, drafted: true, draftedBy: onClock, teamTaken: true }
             : p
       );
@@ -4517,12 +4610,12 @@ async function silentDraftStateSync(leagueId) {
       // Only treat a taken team as blocking when the league's team rule
       // actually enforces uniqueness — 'unrestricted' leagues allow the
       // same MLB team to appear on multiple rosters.
-      const isTeamTaken = !!(fresh.takenTeams || []).includes(p.team) && fresh.teamRule === 'all-unique';
+      const isTeamTaken = !!(fresh.takenTeams || []).includes(normTeamFE(p.team)) && fresh.teamRule === 'all-unique';
       return {
         ...p,
         drafted: isPlayerDrafted || isTeamTaken,
         draftedBy: isPlayerDrafted ? findDraftedByName(fresh, p.name)
-          : isTeamTaken ? (fresh.draftedTeamToManager?.[p.team] || null) : null,
+          : isTeamTaken ? (fresh.draftedTeamToManager?.[normTeamFE(p.team)] || null) : null,
         teamTaken: isTeamTaken && !isPlayerDrafted,
       };
     });

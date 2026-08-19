@@ -17,7 +17,7 @@ import {
 import {
   verifyAuth, managerForUser, isCommissioner,
 } from './lib/auth.mjs';
-import { normName } from './lib/core.mjs';
+import { normName, normTeam } from './lib/core.mjs';
 
 const NO_CACHE = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
@@ -763,17 +763,20 @@ export default async (req) => {
 
     // IR replacement rule: same-team requires pickup to match the IR player's team
     if (slot.irPlayer && league.settings?.irReplacementRule === 'same-team') {
-      if (pickupTeam.toUpperCase() !== slot.irTeam?.toUpperCase()) {
+      if (normTeam(pickupTeam) !== normTeam(slot.irTeam)) {
         return Response.json({ ok: false, error: `IR replacement must be from ${slot.irTeam} (same team rule)` }, { status: 400 });
       }
     }
 
-    // Team rule: enforce league's team uniqueness rule
+    // Team rule: enforce league's team uniqueness rule. normTeam() matters
+    // here — this app has had two different abbreviations in circulation for
+    // the same team (e.g. CHW vs MLB's real CWS for the White Sox), and a
+    // plain string comparison would silently miss the conflict.
     const teamRule = league.settings?.teamRule || 'all-unique';
     if (teamRule === 'all-unique') {
       for (const [mgrName, mgrRoster] of Object.entries(league.months[cm].rosters || {})) {
         const teamTaken = mgrRoster.some(s =>
-          (s.team || '').toUpperCase() === pickupTeam.toUpperCase() &&
+          normTeam(s.team) === normTeam(pickupTeam) &&
           normName(s.player || '') !== pickupNorm
         );
         if (teamTaken) return Response.json({ ok: false, error: `A player from ${pickupTeam} is already in the league (all-unique team rule)` }, { status: 400 });

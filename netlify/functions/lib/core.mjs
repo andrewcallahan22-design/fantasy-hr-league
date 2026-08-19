@@ -8,6 +8,22 @@ export function normName(n) {
     .toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
+// Some code paths produce a team abbreviation from this app's own hardcoded
+// TEAM_ABBR table (draft.mjs, player.mjs), others pull it straight from
+// MLB's live API \u2014 and the two disagree for 3 teams (confirmed against MLB's
+// API directly): Arizona (ARI vs real AZ), San Francisco (SFG vs real SF),
+// and the Chicago White Sox (CHW vs real CWS). Any plain string-equality
+// team-uniqueness check silently misses a conflict when one side used one
+// form and the other used the synonym \u2014 which is exactly how two managers
+// ended up with a White Sox player each despite an all-unique team rule.
+// Normalize at comparison time so this is safe regardless of which form any
+// given piece of code or already-stored data happens to use.
+const TEAM_SYNONYMS = { ARI: 'AZ', SFG: 'SF', CHW: 'CWS' };
+export function normTeam(t) {
+  const up = (t || '').trim().toUpperCase();
+  return TEAM_SYNONYMS[up] || up;
+}
+
 const MONTHS = ['January','February','March','April','May','June','July','August',
                 'September','October','November','December'];
 function monthKey(ts) {
