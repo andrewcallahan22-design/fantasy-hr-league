@@ -94,6 +94,32 @@ export default async (req) => {
     // data, so the normal set-current-month action's merge/migrate logic
     // would incorrectly overwrite one month's data with the other's. This
     // just moves the pointer back, leaving every month bucket untouched.
+    // Delete a leftover month bucket — refuses unless it actually has no
+    // real roster data, so this can't be used to accidentally destroy a
+    // legitimate month. For cleaning up the empty bucket left behind by the
+    // 'close' action bug once currentMonth has already been moved away from
+    // it (the bucket itself doesn't self-delete when the pointer moves).
+    if (body.action === 'delete-empty-month') {
+      const { leagueId, month } = body;
+      if (!leagueId || !month) {
+        return Response.json({ ok: false, error: 'leagueId and month required' }, { status: 400 });
+      }
+      const lg = await loadLeague(leagueId);
+      if (!lg) return Response.json({ ok: false, error: 'League not found' }, { status: 404 });
+      const bucket = lg.months?.[month];
+      if (!bucket) return Response.json({ ok: false, error: 'That month does not exist' }, { status: 400 });
+      const hasRealData = bucket.rosters && Object.values(bucket.rosters).some(r => (r || []).some(s => s.player || s.irPlayer));
+      if (hasRealData) {
+        return Response.json({ ok: false, error: 'Refusing — this month has real roster data' }, { status: 400 });
+      }
+      if (month === lg.currentMonth) {
+        return Response.json({ ok: false, error: 'Refusing — this is the current month' }, { status: 400 });
+      }
+      delete lg.months[month];
+      await saveLeague(lg);
+      return Response.json({ ok: true, deleted: month }, { headers: NO_CACHE });
+    }
+
     // Surgically set a specific roster slot's hr value — does NOT touch
     // currentMonth, other players, or anything else. For reconciling HR
     // credit after a data-correction incident (e.g. moving/zeroing HRs that
