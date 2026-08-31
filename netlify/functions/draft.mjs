@@ -624,20 +624,29 @@ export default async (req) => {
   }
 
   // ── CLOSE DRAFT (commissioner resets) ──
+  // This is used two different ways: (1) finalizing a draft that already
+  // completed normally and populated real rosters for its month, or (2) a
+  // commissioner using it to cancel/reset a draft that's still in progress
+  // (undoing picks, then closing). Case (2) has no valid roster data for the
+  // drafted month at all — blindly advancing currentMonth to it anyway used
+  // to create a rosters-less month bucket that crashed every page expecting
+  // `.rosters` to exist (confirmed twice: this exact failure took down two
+  // different leagues tonight). Only advance currentMonth when the target
+  // month genuinely has roster data to move to.
   if (body.action === 'close') {
     if (!isCommissioner(league, session.email) && !session.isAdmin) {
       return Response.json({ ok: false, error: 'Only the commissioner can close the draft' }, { status: 403 });
     }
     const draftedMonth = league.draft?.month; // save before nulling
     league.draft = null;
-    // Record when the draft closed so the scoreboard can show "Rosters live since X"
     league.draftClosedAt = Date.now();
-    // Ensure currentMonth matches the month that was just drafted
-    if (draftedMonth && league.months) {
+    if (draftedMonth && league.months?.[draftedMonth]?.rosters) {
       league.currentMonth = draftedMonth;
+      league.months[draftedMonth].rostersLiveAt = Date.now();
+    } else if (league.months[league.currentMonth]) {
+      // Nothing valid to switch to — leave currentMonth exactly as it was.
+      league.months[league.currentMonth].rostersLiveAt = league.months[league.currentMonth].rostersLiveAt || Date.now();
     }
-    league.months[league.currentMonth] = league.months[league.currentMonth] || {};
-    league.months[league.currentMonth].rostersLiveAt = Date.now();
     await saveLeague(league);
     return Response.json({ ok: true });
   }
