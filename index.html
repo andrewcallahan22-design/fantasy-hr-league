@@ -3954,7 +3954,7 @@ function renderDraftRoom(body) {
   // ── Active draft ──
   const picks = d.draft.picks || [];
   const onClock = d.onClock;
-  const isMyTurn = myMgr === onClock || isCommish;
+  const isMyTurn = (myMgr === onClock || isCommish) && !d.draft.paused;
   const totalPicks = d.draft.fullOrder?.length || (d.draft.order.length * d.draft.rounds);
   const pctDone = Math.round((picks.length / totalPicks) * 100);
 
@@ -3974,25 +3974,41 @@ function renderDraftRoom(body) {
         <div class="panel" style="margin:0">
           <div class="panel-header">Recent Picks</div>
           <div class="panel-body" style="padding:0;max-height:calc(100vh - 160px);overflow-y:auto">
-            ${picks.length ? [...picks].reverse().slice(0, 30).map((p, i) => `
+            ${picks.length ? [...picks].reverse().slice(0, 30).map((p, i) => {
+              const origIdx = picks.length - 1 - i;
+              const label = p.cleared ? '— removed —' : (p.player || '?');
+              return `
               <div style="padding:8px 12px;border-bottom:1px dashed var(--panel-border);${i === 0 ? 'background:rgba(240,199,94,0.05)' : ''}">
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
                   <span style="font-family:'Roboto Mono',monospace;font-size:9px;color:var(--text-faint)">#${picks.length - i}</span>
-                  <span style="font-weight:${i === 0 ? '600' : '500'};color:var(--text);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${escapeHtml(p.player)}</span>
+                  <span style="font-weight:${i === 0 ? '600' : '500'};color:${p.cleared ? 'var(--text-faint)' : 'var(--text)'};font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;${p.cleared ? 'font-style:italic' : ''}">${escapeHtml(label)}</span>
+                  ${isCommish ? `
+                    <button class="btn btn-sm btn-ghost" style="padding:1px 5px;font-size:10px" title="Edit this pick" onclick="openEditDraftPickModal('${escapeAttr(league.id)}', ${origIdx})">✎</button>
+                    ${!p.skipped && !p.cleared ? `<button class="btn btn-sm btn-ghost" style="padding:1px 5px;font-size:10px;color:var(--red)" title="Remove this pick" onclick="removeDraftPick('${escapeAttr(league.id)}', ${origIdx})">✕</button>` : ''}
+                  ` : ''}
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-                  <span class="team-chip" style="font-size:9px">${escapeHtml(p.team)}</span>
-                  <span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos)}</span>
+                  ${!p.cleared ? `
+                    <span class="team-chip" style="font-size:9px">${escapeHtml(p.team)}</span>
+                    <span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos)}</span>
+                  ` : ''}
                   <span style="font-size:10px;color:var(--text-muted)">${escapeHtml(p.mgr)}</span>
                 </div>
               </div>
-            `).join('') : `<div style="padding:20px 12px;text-align:center;color:var(--text-faint);font-size:12px;font-style:italic">No picks yet</div>`}
+            `;
+            }).join('') : `<div style="padding:20px 12px;text-align:center;color:var(--text-faint);font-size:12px;font-style:italic">No picks yet</div>`}
           </div>
         </div>
       </div>
 
       <!-- CENTER: Draft board (primary focus) -->
       <div>
+        ${d.draft.paused ? `
+          <div class="notice warn" style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+            <span>⏸ <strong>Draft paused</strong> by the commissioner — no picks can be made until it's resumed.</span>
+            ${isCommish ? `<button class="btn btn-sm btn-primary" onclick="toggleDraftPause('${escapeAttr(league.id)}', false)">▶ Resume draft</button>` : ''}
+          </div>
+        ` : ''}
         <!-- On-clock banner -->
         <div style="background:${onClock === myMgr ? 'rgba(240,199,94,0.12)' : 'rgba(13,22,41,0.85)'};border:1px solid ${onClock === myMgr ? 'rgba(240,199,94,0.4)' : 'var(--panel-border)'};border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
           <div>
@@ -4003,9 +4019,10 @@ function renderDraftRoom(body) {
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <div style="font-family:'Roboto Mono',monospace;font-size:12px;color:var(--text-muted)">${pctDone}% done</div>
+            ${isCommish && !d.draft.paused ? `<button class="btn btn-sm btn-ghost" onclick="toggleDraftPause('${escapeAttr(league.id)}', true)">⏸ Pause</button>` : ''}
             ${isCommish && picks.length > 0 ? `<button class="btn btn-sm btn-ghost" onclick="undoLastDraftPick('${escapeAttr(league.id)}')" title="Reverses ${escapeAttr(picks[picks.length-1]?.player || '')}, ${escapeAttr(picks[picks.length-1]?.mgr || '')}'s last pick">↩ Undo last pick</button>` : ''}
             ${isCommish && onClock !== myMgr ? `<button class="btn btn-sm btn-ghost" onclick="skipDraftPick('${escapeAttr(league.id)}')">Skip ${escapeHtml(onClock)}</button>` : ''}
-            ${isCommish ? `<button class="btn btn-sm btn-danger" onclick="resetDraft('${escapeAttr(league.id)}')">Close draft</button>` : ''}
+            ${isCommish ? `<button class="btn btn-sm btn-danger" onclick="cancelDraftInProgress('${escapeAttr(league.id)}')" title="Abandon this draft entirely and start over — for canceling, not for finishing">🗑 Cancel draft</button>` : ''}
           </div>
         </div>
 
@@ -4667,6 +4684,122 @@ async function skipDraftPick(leagueId) {
   });
   const res = await r.json();
   if (!res.ok) { toastErr(res.error); return; }
+  await loadDraftState(document.getElementById('tab-body'));
+}
+
+async function toggleDraftPause(leagueId, pause) {
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: pause ? 'pause' : 'resume', leagueId }),
+  });
+  const res = await r.json();
+  if (!res.ok) { toastErr(res.error); return; }
+  toastOk(pause ? '⏸ Draft paused' : '▶ Draft resumed');
+  await loadDraftState(document.getElementById('tab-body'));
+}
+
+async function cancelDraftInProgress(leagueId) {
+  if (!await confirmDialog('Cancel this draft entirely? All picks will be lost and you can start a fresh draft from scratch. This cannot be undone.')) return;
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'cancel-draft', leagueId }),
+  });
+  const res = await r.json();
+  if (!res.ok) { toastErr(res.error); return; }
+  toastOk('Draft canceled.');
+  _draft = null;
+  await loadDraftState(document.getElementById('tab-body'));
+}
+
+async function removeDraftPick(leagueId, pickIndex) {
+  const pick = _draft?.draft?.picks?.[pickIndex];
+  if (!await confirmDialog(`Remove ${pick?.player || 'this pick'} (${pick?.mgr})? Their slot will be open and the player freed up for anyone to draft.`)) return;
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'clear-pick', leagueId, pickIndex }),
+  });
+  const res = await r.json();
+  if (!res.ok) { toastErr(res.error); return; }
+  toastOk('Pick removed.');
+  await loadDraftState(document.getElementById('tab-body'));
+}
+
+function openEditDraftPickModal(leagueId, pickIndex) {
+  const pick = _draft?.draft?.picks?.[pickIndex];
+  if (!pick) return;
+  document.getElementById('edit-pick-modal')?.remove();
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay open';
+  wrap.id = 'edit-pick-modal';
+  wrap.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-head">
+        <div class="modal-title">✎ Edit pick — ${escapeHtml(pick.mgr)}</div>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="padding:16px">
+        <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">Type a player name and pick from the results — this replaces whatever's currently in this slot without affecting anyone else's picks or turn order.</p>
+        <input class="input" id="edit-pick-search" placeholder="Search player…" style="width:100%" oninput="searchEditPickPlayer(this.value)">
+        <div id="edit-pick-results" style="max-height:200px;overflow-y:auto;margin-top:8px"></div>
+        <div id="edit-pick-selected" style="margin-top:10px;font-size:13px;color:var(--text-faint)">Search and select a replacement above</div>
+        <div class="error" id="edit-pick-err" style="margin-top:6px"></div>
+      </div>
+      <div style="padding:12px 16px;border-top:1px solid var(--panel-border);display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+        <button class="btn btn-primary" id="edit-pick-confirm-btn" disabled onclick="submitEditDraftPick('${escapeAttr(leagueId)}', ${pickIndex})">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+  window._editPickSelected = null;
+  setTimeout(() => document.getElementById('edit-pick-search')?.focus(), 100);
+}
+
+let _editPickSearchTimer = null;
+async function searchEditPickPlayer(query) {
+  clearTimeout(_editPickSearchTimer);
+  const resultsEl = document.getElementById('edit-pick-results');
+  if (query.trim().length < 2) { if (resultsEl) resultsEl.innerHTML = ''; return; }
+  _editPickSearchTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`${API_DRAFT}?leagueId=${encodeURIComponent(CURRENT_LEAGUE.league.id)}&search=${encodeURIComponent(query)}`, { headers: authHeaders() });
+      const res = await r.json();
+      if (!res.ok || !resultsEl) return;
+      resultsEl.innerHTML = (res.results || []).slice(0, 15).map(p => `
+        <button class="btn btn-sm btn-ghost" style="display:flex;width:100%;justify-content:space-between;margin-bottom:2px;font-size:12px"
+          onclick='selectEditPickPlayer(${JSON.stringify({name:p.name, team:p.team, pos:p.pos, hr:p.hr})})'>
+          <span>${escapeHtml(p.name)}</span>
+          <span style="color:var(--text-muted)">${escapeHtml(p.team)} · ${escapeHtml(p.pos)} · ${p.hr} HR</span>
+        </button>
+      `).join('') || `<div style="font-size:12px;color:var(--text-faint);padding:8px">No matches</div>`;
+    } catch {}
+  }, 300);
+}
+
+function selectEditPickPlayer(player) {
+  window._editPickSelected = player;
+  const display = document.getElementById('edit-pick-selected');
+  if (display) display.innerHTML = `Selected: <strong style="color:var(--text)">${escapeHtml(player.name)}</strong> <span style="color:var(--text-muted)">${escapeHtml(player.team)} · ${escapeHtml(player.pos)}</span>`;
+  const btn = document.getElementById('edit-pick-confirm-btn');
+  if (btn) btn.disabled = false;
+}
+
+async function submitEditDraftPick(leagueId, pickIndex) {
+  const sel = window._editPickSelected;
+  const err = document.getElementById('edit-pick-err');
+  if (!sel) { if (err) err.textContent = 'Select a player first'; return; }
+  const r = await fetch(API_DRAFT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ action: 'edit-pick', leagueId, pickIndex, player: sel.name, team: sel.team, pos: sel.pos, hr: sel.hr }),
+  });
+  const res = await r.json();
+  if (!res.ok) { if (err) err.textContent = res.error || 'Failed'; return; }
+  document.getElementById('edit-pick-modal')?.remove();
+  toastOk(`✓ Pick updated to ${sel.name}`);
   await loadDraftState(document.getElementById('tab-body'));
 }
 

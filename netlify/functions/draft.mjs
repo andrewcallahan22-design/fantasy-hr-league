@@ -5,7 +5,11 @@
 // POST { action: 'pick',  leagueId, pick: {player,team,pos,hr,mlbId} }
 // POST { action: 'undo',  leagueId }
 // POST { action: 'skip',  leagueId, manager }  (commissioner only)
-// POST { action: 'close', leagueId }            (commissioner only)
+// POST { action: 'pause' | 'resume', leagueId }              (commissioner only)
+// POST { action: 'edit-pick',  leagueId, pickIndex, player, team, pos, hr }  (commissioner only)
+// POST { action: 'clear-pick', leagueId, pickIndex }          (commissioner only)
+// POST { action: 'cancel-draft', leagueId }  — abandon an in-progress draft (commissioner only)
+// POST { action: 'close', leagueId }  — finalize an already-completed draft (commissioner only)
 
 import { getStore } from '@netlify/blobs';
 import { verifyAuth, isCommissioner, managerForUser } from './lib/auth.mjs';
@@ -621,6 +625,93 @@ export default async (req) => {
     d.picks.push({ mgr: onClock, player: '— skipped —', team: '?', pos: '?', hr: 0, skipped: true, t: Date.now() });
     await saveLeague(league);
     return Response.json({ ok: true, ...draftView(league, session) });
+  }
+
+  // ── PAUSE / RESUME (commissioner halts picking without touching anything) ──
+  if (body.action === 'pause' || body.action === 'resume') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can pause the draft' }, { status: 403 });
+    }
+    const d = league.draft;
+    if (!d || d.status !== 'active') {
+      return Response.json({ ok: false, error: 'No active draft' }, { status: 400 });
+    }
+    d.paused = body.action === 'pause';
+    await saveLeague(league);
+    return Response.json({ ok: true, ...draftView(league, session) });
+  }
+
+  // ── EDIT PICK (fix a wrong pick without disturbing turn order) ──
+  // Overwrites a specific historical pick in place — since whose turn is
+  // next is always fullOrder[picks.length], changing what's AT an existing
+  // index never affects turn order, unlike removing/inserting array entries.
+  // Deliberately skips position/team-rule re-validation: this is a manual
+  // mistake-correction tool for the commissioner, who needs full control
+  // even if the "correct" player would otherwise trip a rule.
+  if (body.action === 'edit-pick') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can edit a pick' }, { status: 403 });
+    }
+    const d = league.draft;
+    if (!d || d.status !== 'active') {
+      return Response.json({ ok: false, error: 'No active draft' }, { status: 400 });
+    }
+    const pickIndex = parseInt(body.pickIndex);
+    const existing = d.picks[pickIndex];
+    if (!existing) return Response.json({ ok: false, error: 'No pick at that index' }, { status: 400 });
+    const { player, team, pos, hr } = body;
+    if (!player || !team) {
+      return Response.json({ ok: false, error: 'Pick needs player and team' }, { status: 400 });
+    }
+    const newNorm = normName(player);
+    const dup = d.picks.some((p, i) => i !== pickIndex && !p.skipped && !p.cleared && normName(p.player) === newNorm);
+    if (dup) return Response.json({ ok: false, error: `${player} has already been drafted` }, { status: 400 });
+    d.picks[pickIndex] = {
+      ...existing, player, team, pos: pos || '?', hr: parseInt(hr) || 0,
+      editedAt: Date.now(), skipped: false, cleared: false,
+    };
+    await saveLeague(league);
+    return Response.json({ ok: true, ...draftView(league, session) });
+  }
+
+  // ── CLEAR PICK (undraft a specific player, any point in the draft) ──
+  // Same in-place-overwrite approach as edit-pick, but to empty values —
+  // frees the player back into the pool and leaves an open roster slot,
+  // without shifting any other pick's position or whose turn is next.
+  if (body.action === 'clear-pick') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can remove a pick' }, { status: 403 });
+    }
+    const d = league.draft;
+    if (!d || d.status !== 'active') {
+      return Response.json({ ok: false, error: 'No active draft' }, { status: 400 });
+    }
+    const pickIndex = parseInt(body.pickIndex);
+    const existing = d.picks[pickIndex];
+    if (!existing) return Response.json({ ok: false, error: 'No pick at that index' }, { status: 400 });
+    d.picks[pickIndex] = { mgr: existing.mgr, player: '', team: '', pos: '', hr: 0, cleared: true, t: Date.now() };
+    await saveLeague(league);
+    return Response.json({ ok: true, ...draftView(league, session) });
+  }
+
+  // ── CANCEL DRAFT (abandon one still in progress — not the same as close) ──
+  // 'close' finalizes a draft that already completed and populated real
+  // rosters. This is for the opposite case: a commissioner wants to scrap an
+  // in-progress draft and start over. It never touches currentMonth or
+  // league.months at all — there's no valid roster data to move to, so
+  // nothing should change about which month is live. This is the tool that
+  // was missing tonight, which led to 'close' being misused for the same
+  // purpose and corrupting two leagues.
+  if (body.action === 'cancel-draft') {
+    if (!isCommissioner(league, session.email) && !session.isAdmin) {
+      return Response.json({ ok: false, error: 'Only the commissioner can cancel the draft' }, { status: 403 });
+    }
+    if (!league.draft) {
+      return Response.json({ ok: false, error: 'No draft to cancel' }, { status: 400 });
+    }
+    league.draft = null;
+    await saveLeague(league);
+    return Response.json({ ok: true });
   }
 
   // ── CLOSE DRAFT (commissioner resets) ──
