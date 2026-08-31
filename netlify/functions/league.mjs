@@ -191,8 +191,11 @@ export default async (req) => {
     // Promote them into the managers list and create an empty roster for current month
     if (!league.managers.includes(m.manager)) league.managers.push(m.manager);
     const cm = league.currentMonth;
-    if (cm && league.months?.[cm] && !league.months[cm].rosters[m.manager]) {
-      league.months[cm].rosters[m.manager] = emptyRoster(league.settings.rosterSize);
+    if (cm && league.months?.[cm]) {
+      if (!league.months[cm].rosters) league.months[cm].rosters = {};
+      if (!league.months[cm].rosters[m.manager]) {
+        league.months[cm].rosters[m.manager] = emptyRoster(league.settings.rosterSize);
+      }
     }
     await saveLeague(league);
     return Response.json({ ok: true }, { headers: NO_CACHE });
@@ -617,7 +620,7 @@ export default async (req) => {
     if (!irSlots) return Response.json({ ok: false, error: 'IR slots not enabled in this league' }, { status: 400 });
 
     const cm = league.currentMonth;
-    const roster = league.months[cm]?.rosters[mgr] || [];
+    const roster = league.months[cm]?.rosters?.[mgr] || [];
     const slotIdx = parseInt(body.slotIndex);
     const slot = roster[slotIdx];
     if (!slot?.player) return Response.json({ ok: false, error: 'No player in that slot' }, { status: 400 });
@@ -697,7 +700,7 @@ export default async (req) => {
     }
     const mgr = myMember.manager;
     const cm = league.currentMonth;
-    const roster = league.months[cm]?.rosters[mgr] || [];
+    const roster = league.months[cm]?.rosters?.[mgr] || [];
     const slotIdx = parseInt(body.slotIndex);
     const slot = roster[slotIdx];
     if (!slot?.irPlayer) return Response.json({ ok: false, error: 'No IR player in that slot' }, { status: 400 });
@@ -744,7 +747,7 @@ export default async (req) => {
     }
     const mgr = myMember.manager;
     const cm = league.currentMonth;
-    const roster = league.months[cm]?.rosters[mgr] || [];
+    const roster = league.months[cm]?.rosters?.[mgr] || [];
     const slotIdx = parseInt(body.slotIndex);
     const slot = roster[slotIdx];
     if (!slot) return Response.json({ ok: false, error: 'Invalid slot' }, { status: 400 });

@@ -143,9 +143,12 @@ export default async (req) => {
           m.status = 'active';
           if (!lg.managers.includes(m.manager)) lg.managers.push(m.manager);
           const cm = lg.currentMonth;
-          if (cm && lg.months?.[cm] && !lg.months[cm].rosters[m.manager]) {
-            lg.months[cm].rosters[m.manager] = Array(lg.settings?.rosterSize || 6)
-              .fill(null).map(() => ({ player: '', team: '', position: '', hr: 0 }));
+          if (cm && lg.months?.[cm]) {
+            if (!lg.months[cm].rosters) lg.months[cm].rosters = {};
+            if (!lg.months[cm].rosters[m.manager]) {
+              lg.months[cm].rosters[m.manager] = Array(lg.settings?.rosterSize || 6)
+                .fill(null).map(() => ({ player: '', team: '', position: '', hr: 0 }));
+            }
           }
           approved++;
         }
@@ -177,9 +180,12 @@ export default async (req) => {
       }
       if (!lg.managers.includes(manager)) lg.managers.push(manager);
       const cm = lg.currentMonth;
-      if (cm && lg.months?.[cm] && !lg.months[cm].rosters[manager]) {
-        lg.months[cm].rosters[manager] = Array(lg.settings?.rosterSize || 6)
-          .fill(null).map(() => ({ player: '', team: '', position: '', hr: 0 }));
+      if (cm && lg.months?.[cm]) {
+        if (!lg.months[cm].rosters) lg.months[cm].rosters = {};
+        if (!lg.months[cm].rosters[manager]) {
+          lg.months[cm].rosters[manager] = Array(lg.settings?.rosterSize || 6)
+            .fill(null).map(() => ({ player: '', team: '', position: '', hr: 0 }));
+        }
       }
       await saveLeague(lg);
       return Response.json({ ok: true }, { headers: NO_CACHE });

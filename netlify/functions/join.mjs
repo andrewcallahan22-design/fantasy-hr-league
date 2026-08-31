@@ -72,6 +72,7 @@ export default async (req) => {
     if (!league.managers.includes(managerName)) league.managers.push(managerName);
     const cm = league.currentMonth;
     if (cm && league.months?.[cm]) {
+      if (!league.months[cm].rosters) league.months[cm].rosters = {};
       league.months[cm].rosters[managerName] = Array(league.settings?.rosterSize || 6)
         .fill(null).map(() => ({ player: '', team: '', position: '', hr: 0 }));
     }
