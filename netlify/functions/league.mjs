@@ -422,7 +422,7 @@ export default async (req) => {
         slot.manualHrTs = Date.now();
         if (before !== newVal) {
           if (!league.changeLog) league.changeLog = [];
-          league.changeLog.push({ t: Date.now(), player: slot.player || '?', delta: newVal - before, mgr: targetMgr, month: cm, src: 'manual' });
+          league.changeLog.push({ t: Date.now(), player: slot.player || '?', delta: newVal - before, mgr: targetMgr, month: cm, src: 'manual', total: newVal });
           if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
         }
         // Also update baseline as belt-and-suspenders

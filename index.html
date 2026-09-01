@@ -3512,7 +3512,7 @@ function renderHistory(body) {
             return `<div class="history-row">
               <span class="history-when">${d.toLocaleDateString([],{month:'short',day:'numeric'})} ${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
               <span style="flex:1;min-width:140px"><strong>${escapeHtml(e.player || '?')}</strong> · <span style="color:var(--text-muted)">${escapeHtml(e.mgr)}</span></span>
-              <span class="history-delta ${e.delta < 0 ? 'neg' : ''}">${e.delta > 0 ? '+' : ''}${e.delta} HR</span>
+              <span class="history-delta ${e.delta < 0 ? 'neg' : ''}">${e.delta > 0 ? '+' : ''}${e.delta} HR${e.total !== undefined ? ` <span style="color:var(--text-faint);font-weight:400">→ ${e.total}</span>` : ''}</span>
               <span class="history-src">${e.src === 'sync' ? 'auto' : 'manual'}</span>
             </div>`;
           }).join('')}
