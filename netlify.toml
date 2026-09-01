@@ -27,12 +27,6 @@
   [headers.values]
     Cache-Control = "no-cache"
 
-# Route all /.netlify/functions/* calls to the functions directory
-[[redirects]]
-  from = "/.netlify/functions/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-
 # SPA fallback — send all non-function, non-asset routes to index.html
 # so client-side routing (/admin, /league/*, /join/*, etc.) works on reload.
 [[redirects]]
