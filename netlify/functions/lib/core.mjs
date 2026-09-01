@@ -386,6 +386,7 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
   if (!league.seasonHints)    league.seasonHints = {};
   if (!league.last24h)        league.last24h = {};
   if (!league.nextGame)       league.nextGame = {};
+  if (!league.lastSyncedAt)   league.lastSyncedAt = {};
 
   const [, mYear] = key.split('-');
   const seasonYear = mYear || String(new Date().getFullYear());
@@ -450,13 +451,36 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
     league.nextGame[nk]    = r.nextGame;
 
     const baseline = league.seasonBaseline[nk];
+    const lastSyncedAt = league.lastSyncedAt[nk];
+    const now = Date.now();
+    // A player who sat on nobody's roster in this league for a real stretch
+    // (dropped, or just never re-drafted) stops being synced entirely — their
+    // baseline freezes at whatever it was. If they're later added to a
+    // roster again, blindly diffing against that stale baseline would dump
+    // every HR they hit during the ENTIRE untracked gap onto whoever just
+    // added them, misattributed as if it happened the instant they were
+    // added (confirmed: Juan Soto sat unrostered in "Jeff Thinks He Will
+    // Win" for all of August, then got credited a HR the moment he was
+    // drafted for September). A month-boundary promotion also stops and
+    // restarts tracking, but within the same sync pass (see the auto-promote
+    // block above) — so a genuinely continuous re-draft never sees more than
+    // one cron cycle's gap. 20 minutes safely separates "just crossed a
+    // month boundary or cron hiccupped" from "was actually off every roster
+    // for a while" — anything past it re-anchors cleanly instead of crediting
+    // the gap.
+    const GAP_THRESHOLD_MS = 20 * 60 * 1000;
+    const isStaleReentry = baseline !== undefined && lastSyncedAt !== undefined && (now - lastSyncedAt) > GAP_THRESHOLD_MS;
 
-    // Set baseline if first time seeing this player
-    if (baseline === undefined) {
+    // Set baseline if first time seeing this player, or re-anchor after a gap
+    if (baseline === undefined || isStaleReentry) {
+      if (isStaleReentry) {
+        console.log(`[sync:${league.id}] ${r.player} re-entered a roster after ${Math.round((now - lastSyncedAt) / 60000)}min untracked — re-anchoring baseline instead of crediting the gap`);
+      }
       league.seasonBaseline[nk] = r.seasonHR;
     }
+    league.lastSyncedAt[nk] = now;
 
-    const delta = baseline !== undefined ? r.seasonHR - baseline : 0;
+    const delta = (baseline !== undefined && !isStaleReentry) ? r.seasonHR - baseline : 0;
     if (delta !== 0) {
       console.log(`[sync:${league.id}] HR delta for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
     }
