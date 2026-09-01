@@ -3203,6 +3203,12 @@ function openWaiverClaim(mgr, slotIndex) {
           <option value="OF">OF</option>
           <option value="DH">DH</option>
         </select>
+        <select class="select" id="waiver-health-filter" style="font-size:12px;padding:5px 8px" onchange="setWaiverHealthFilter(this.value)">
+          <option value="ALL">All Health</option>
+          <option value="Active">Healthy only</option>
+          <option value="IL">IL</option>
+          <option value="OTHER">Other (restricted/suspended/etc.)</option>
+        </select>
         <span style="font-size:11px;color:var(--text-muted);white-space:nowrap" id="waiver-count"></span>
       </div>
       <div id="waiver-pool-list" class="modal-body" style="padding:0;max-height:55vh;overflow-y:auto;-webkit-overflow-scrolling:touch">
@@ -3233,6 +3239,12 @@ function openWaiverClaim(mgr, slotIndex) {
 let _waiverPool = [];
 let _waiverSelected = null;
 let _waiverBlockedPositions = new Set();
+let _waiverHealthFilter = 'ALL';
+
+function setWaiverHealthFilter(value) {
+  _waiverHealthFilter = value;
+  renderWaiverPool();
+}
 
 async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, blockedPositions = new Set()) {
   const listEl = document.getElementById('waiver-pool-list');
@@ -3266,19 +3278,29 @@ async function loadWaiverPool(league, takenNames, takenTeams, requiredTeam, bloc
       const batch = teamsToFetch.slice(i, i + BATCH);
       const results = await Promise.all(batch.map(async t => {
         try {
-          const r = await fetch(`https://statsapi.mlb.com/api/v1/teams/${t.id}/roster?rosterType=active&season=${season}&hydrate=person(stats(type=season,group=hitting))`);
+          // 40Man (not active) so a real-time IL placement shows up as a
+          // health status instead of the player just silently vanishing —
+          // that's what lets the health filter below actually mean something.
+          const r = await fetch(`https://statsapi.mlb.com/api/v1/teams/${t.id}/roster?rosterType=40Man&season=${season}&hydrate=person(stats(type=season,group=hitting))`);
           if (!r.ok) return [];
           const data = await r.json();
           return (data.roster || [])
             .filter(p => p.position?.abbreviation !== 'P') // hitters only — this is a HR-only league
-            .map(p => ({
-              name:   p.person?.fullName || '',
-              team:   t.abbreviation || '?',
-              pos:    p.position?.abbreviation || '?',
-              hr:     parseInt(p.person?.stats?.[0]?.splits?.[0]?.stat?.homeRuns) || 0,
-              prevHR: null,
-              id:     p.person?.id,
-            }));
+            .map(p => {
+              const statusCode = p.status?.code || 'A';
+              let health = 'Active';
+              if (statusCode.startsWith('D') || statusCode === 'DL' || statusCode === 'IL') health = 'IL';
+              else if (statusCode !== 'A') health = statusCode;
+              return {
+                name:   p.person?.fullName || '',
+                team:   t.abbreviation || '?',
+                pos:    p.position?.abbreviation || '?',
+                hr:     parseInt(p.person?.stats?.[0]?.splits?.[0]?.stat?.homeRuns) || 0,
+                prevHR: null,
+                id:     p.person?.id,
+                health,
+              };
+            });
         } catch { return []; }
       }));
       allPlayers.push(...results.flat());
@@ -3322,6 +3344,9 @@ function renderWaiverPool() {
   const filtered = _waiverPool.filter(p => {
     if (posFilter && p.pos !== posFilter) return false;
     if (search && !p.name.toLowerCase().includes(search) && !p.team?.toLowerCase().includes(search)) return false;
+    if (_waiverHealthFilter === 'Active' && p.health !== 'Active') return false;
+    if (_waiverHealthFilter === 'IL' && p.health !== 'IL') return false;
+    if (_waiverHealthFilter === 'OTHER' && (p.health === 'Active' || p.health === 'IL')) return false;
     return true;
   });
 
@@ -3344,11 +3369,13 @@ function renderWaiverPool() {
       <th>Pos</th>
       <th class="right">Season HR</th>
       <th class="right">Last 7d</th>
+      <th>Hlth</th>
       <th></th>
     </tr></thead>
     <tbody>
       ${filtered.map(p => {
         const isSelected = _waiverSelected && normNameFE(_waiverSelected.name) === normNameFE(p.name);
+        const healthColor = p.health === 'Active' ? 'var(--green)' : p.health === 'IL' ? 'var(--red)' : 'var(--orange)';
         return `<tr style="${isSelected ? 'background:rgba(58,160,92,0.1)' : ''}">
           <td>
             <button data-player="${escapeAttr(p.name)}" onclick="openPlayerProfile(this.dataset.player,null)"
@@ -3358,6 +3385,7 @@ function renderWaiverPool() {
           <td><span class="pos-chip" style="font-size:9px">${escapeHtml(p.pos||'?')}</span></td>
           <td class="right" style="font-family:'Roboto Mono',monospace;font-weight:700">${p.hr ?? '—'}</td>
           <td class="right" style="font-family:'Roboto Mono',monospace;color:var(--text-muted)">${p.prevHR !== undefined ? p.prevHR : '—'}</td>
+          <td style="font-size:11px;color:${healthColor}">${escapeHtml(p.health || 'Active')}</td>
           <td style="text-align:center">
             <button class="btn btn-sm ${isSelected ? 'btn-primary' : 'btn-ghost'}" style="font-size:11px"
               onclick='selectWaiverPlayer(${JSON.stringify({name:p.name, team:p.team, pos:p.pos, id:p.id})})'>

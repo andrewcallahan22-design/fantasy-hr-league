@@ -1,6 +1,6 @@
 // Draft endpoint — per-league. Requires ?leagueId=ID on every request.
 //
-// GET  ?leagueId=ID          → draft state + player pool (400 hitters)
+// GET  ?leagueId=ID          → draft state + full player pool (every position player on all 30 teams' 40-man rosters)
 // POST { action: 'open',  leagueId, draftType, rounds, order? }
 // POST { action: 'pick',  leagueId, pick: {player,team,pos,hr,mlbId} }
 // POST { action: 'undo',  leagueId }
@@ -64,102 +64,79 @@ export function positionsValid(positions, rule) {
 }
 
 // ── Player pool ──
-// Fetches top 400 hitters by season HR from the MLB Stats API.
-// Pool is cached in Netlify Blobs for 5 minutes.
+// Every position player on all 30 teams' 40-man rosters — not just the top
+// HR hitters. The old approach built the pool from MLB's "leaders" endpoint,
+// which only ever returns players who already have a meaningful HR total —
+// silently excluding rookies, backup catchers, and anyone else who hasn't
+// gone deep yet, even though they're perfectly real, active, draftable
+// players. Pool is cached in Netlify Blobs for 5 minutes.
 async function fetchPlayerPool() {
   const store = getStore('league');
-  // v5 — fixes health status which was previously reading the 40-man roster
-  // endpoint (always reports Active regardless of real IL status). Now uses
-  // the person-detail endpoint hydrated with rosterEntries, which correctly
-  // reflects real-time IL placements.
-  const cacheKey = `playerPool-v6`;
+  // v7 — pool is now every position player on all 30 teams' 40-man rosters
+  // (previously just the top ~500 HR leaders, which excluded low/no-HR
+  // active players entirely).
+  const cacheKey = `playerPool-v7`;
   const cached = await store.get(cacheKey, { type: 'json' });
   if (cached && Date.now() - cached.t < 5 * 60 * 1000) return cached.pool;
 
   const season = new Date().getFullYear();
 
-  // Fetch top 400 hitters by HR — hydrate person with primaryPosition
-  const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=500&hydrate=person(primaryPosition),team`;
-  const hrResp = await fetch(hrUrl);
-  if (!hrResp.ok) throw new Error(`MLB leaders ${hrResp.status}`);
-  const hrData = await hrResp.json();
-  const leaders = hrData?.leagueLeaders?.[0]?.leaders || [];
-
-  // Fetch full player roster with positions as a reliable fallback.
-  // The leaders endpoint sometimes returns blank position for some players.
-  let posMap = {};
+  // Season HR totals — used as an overlay, not the source of who's in the
+  // pool. Anyone not in this list (i.e. hasn't hit one yet) just gets 0.
+  let hrMap = {};
   try {
-    const rosterUrl = `https://statsapi.mlb.com/api/v1/sports/1/players?season=${season}&gameType=R&fields=people,id,primaryPosition,abbreviation`;
-    const rosterResp = await fetch(rosterUrl);
-    if (rosterResp.ok) {
-      const rosterData = await rosterResp.json();
-      for (const p of (rosterData.people || [])) {
-        if (p.id && p.primaryPosition?.abbreviation) {
-          posMap[p.id] = p.primaryPosition.abbreviation;
-        }
+    const hrUrl = `https://statsapi.mlb.com/api/v1/stats/leaders?leaderCategories=homeRuns&statGroup=hitting&season=${season}&sportId=1&limit=500`;
+    const hrResp = await fetch(hrUrl);
+    if (hrResp.ok) {
+      const hrData = await hrResp.json();
+      for (const l of (hrData?.leagueLeaders?.[0]?.leaders || [])) {
+        if (l?.person?.id) hrMap[l.person.id] = parseInt(l.value) || 0;
       }
     }
-  } catch {}
-
-  // Fetch real injury status per-team via the team roster endpoint with
-  // rosterType=40Man, which DOES correctly reflect IL placements (unlike
-  // /sports/1/players which only reports the static 40-man membership and
-  // doesn't update when a player goes on the IL). We batch by team to keep
-  // this fast — only fetching teams that have at least one player in our
-  // top-400 leaders list.
-  let injuryMap = {};
-  try {
-    const teamIds = [...new Set(leaders.map(l => l?.team?.id).filter(Boolean))];
-    const batchSize = 10;
-    for (let i = 0; i < teamIds.length; i += batchSize) {
-      const batch = teamIds.slice(i, i + batchSize);
-      await Promise.all(batch.map(async (teamId) => {
-        try {
-          // rosterType=40Man includes status (Active/IL-10/IL-15/IL-60/etc.)
-          const teamRosterUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=40Man&season=${season}`;
-          const resp = await fetch(teamRosterUrl);
-          if (!resp.ok) return;
-          const data = await resp.json();
-          for (const entry of (data.roster || [])) {
-            const id = entry?.person?.id;
-            const statusCode = entry?.status?.code; // 'A' active, 'D10'/'D15'/'D60' IL, 'RM' restricted, etc.
-            if (id && statusCode) injuryMap[id] = statusCode;
-          }
-        } catch {}
-      }));
-    }
   } catch (e) {
-    console.warn('Injury status batch fetch failed:', e.message);
+    console.warn('HR leaders fetch failed (pool will show 0 HR for everyone):', e.message);
   }
 
-  const pool = leaders.map(l => {
-    const id = l?.person?.id;
-    const statusCode = id ? (injuryMap[id] || 'A') : 'A';
-    let health = 'Active';
-    if (statusCode.startsWith('D') || statusCode === 'DL' || statusCode === 'IL') health = 'IL';
-    else if (statusCode !== 'A') health = statusCode;
+  // Every team's 40-man roster, batched, gives us the full active player
+  // list, real position, and real IL status in one call per team — no
+  // separate fallback endpoints needed.
+  const teamIds = Object.keys(TEAM_ABBR).map(Number);
+  const players = {};
+  const batchSize = 10;
+  for (let i = 0; i < teamIds.length; i += batchSize) {
+    const batch = teamIds.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (teamId) => {
+      try {
+        const teamRosterUrl = `https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=40Man&season=${season}`;
+        const resp = await fetch(teamRosterUrl);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        for (const entry of (data.roster || [])) {
+          const id = entry?.person?.id;
+          const pos = entry?.position?.abbreviation || '?';
+          if (!id || pos === 'P') continue; // pitchers excluded — this is a hitters-only league
+          const statusCode = entry?.status?.code || 'A'; // 'A' active, 'D10'/'D15'/'D60' IL, 'RM' restricted, etc.
+          let health = 'Active';
+          if (statusCode.startsWith('D') || statusCode === 'DL' || statusCode === 'IL') health = 'IL';
+          else if (statusCode !== 'A') health = statusCode;
+          players[id] = {
+            id,
+            name:   entry?.person?.fullName || '',
+            team:   TEAM_ABBR[teamId] || '?',
+            pos,
+            hr:     hrMap[id] || 0,
+            prevHR: 0,
+            health,
+            rank:   0,
+          };
+        }
+      } catch (e) {
+        console.warn(`Roster fetch failed for team ${teamId}:`, e.message);
+      }
+    }));
+  }
 
-    // Position resolution — try 3 sources in order of reliability:
-    // 1. Full player roster endpoint (most reliable)
-    // 2. Leader entry position field
-    // 3. Person primaryPosition from hydration
-    const pos = (id && posMap[id])
-      || l?.position?.abbreviation
-      || l?.person?.primaryPosition?.abbreviation
-      || '?';
-
-    return {
-      id,
-      name:   l?.person?.fullName || '',
-      team:   TEAM_ABBR[l?.team?.id] || l?.team?.abbreviation || '?',
-      pos,
-      hr:     parseInt(l?.value) || 0,
-      prevHR: 0,
-      health,
-      rank:   l?.rank || 0,
-    };
-  }).filter(p => p.name);
-
+  const pool = Object.values(players).filter(p => p.name);
   await store.setJSON(cacheKey, { t: Date.now(), pool });
   return pool;
 }
@@ -206,8 +183,8 @@ export default async (req) => {
   const myMgr = session ? managerForUser(league, session.email) : null;
 
   // ── LIVE PLAYER SEARCH ──
-  // Used when a player isn't in the pre-loaded top-400 pool (e.g. lower-HR
-  // players like catchers, or anyone the leaders endpoint missed). Searches
+  // Used when a player isn't in the pre-loaded 40-man-roster pool (e.g. a
+  // very recent call-up before the 5-minute pool cache refreshes). Searches
   // the live MLB people-search API for ANY active player by name.
   if (req.method === 'GET' && url.searchParams.get('search')) {
     const query = url.searchParams.get('search').trim();
@@ -264,8 +241,8 @@ export default async (req) => {
 
     // ── FAST PATH: stateOnly=true ──
     // Used by polling and post-pick refreshes, which only need updated picks,
-    // turn order, and roster info — NOT the full 400-player pool (which
-    // requires several MLB API calls and is the slow part of this endpoint).
+    // turn order, and roster info — NOT the full player pool (which requires
+    // several MLB API calls and is the slow part of this endpoint).
     // The pool barely changes minute to minute, so the frontend fetches it
     // once on initial load and merges fresh draft state into it locally.
     // This is what makes picks and polling feel instant instead of laggy.
