@@ -1997,7 +1997,8 @@ function renderLeagueShell() {
     const daysLeftInMonth = new Date(hYear, hMonth, 0).getDate() - hDay;
     const nextMonth = nextMonthKey(league.currentMonth);
     const nextMonthDrafted = !!league.months?.[nextMonth];
-    if (daysLeftInMonth <= 2 && !nextMonthDrafted) {
+    const nextMonthDraftInProgress = league.draft?.status === 'active' && league.draft?.month === nextMonth;
+    if (daysLeftInMonth <= 2 && !nextMonthDrafted && !nextMonthDraftInProgress) {
       redraftBanner = `<div class="notice warn">⏰ ${escapeHtml(league.currentMonth.split('-')[0])} ends in ${daysLeftInMonth <= 0 ? 'less than a day' : daysLeftInMonth + ' day' + (daysLeftInMonth === 1 ? '' : 's')} — <a href="#" onclick="navigate('/league/${encodeURIComponent(league.id)}/draft');return false">open ${escapeHtml(nextMonth.split('-')[0])}'s draft</a> so rosters are ready when it starts.</div>`;
     }
   }

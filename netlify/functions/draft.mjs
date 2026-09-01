@@ -34,10 +34,6 @@ function monthSortKey(k) {
   const [m, y] = k.split('-');
   return parseInt(y) * 12 + MONTHS.indexOf(m);
 }
-function monthKey(ts) {
-  const d = new Date(ts);
-  return `${MONTHS[d.getMonth()]}-${d.getFullYear()}`;
-}
 function nextMonthKey(latest) {
   const [m, y] = latest.split('-');
   let mi = MONTHS.indexOf(m) + 1, yi = parseInt(y);
@@ -559,13 +555,17 @@ export default async (req) => {
         });
       });
 
-      // Only go live immediately if the drafted month isn't in the future —
-      // a pre-draft for a future month (e.g. drafting August while July is
-      // still active) sits ready in league.months until the real calendar
-      // reaches it; runSyncForLeague() promotes it automatically at that point.
-      if (monthSortKey(d.month) <= monthSortKey(monthKey(Date.now()))) {
-        league.currentMonth = d.month;
-      }
+      // currentMonth is deliberately left untouched here. league.months[d.month]
+      // now has real roster data sitting ready; runSyncForLeague() in core.mjs
+      // is the only place currentMonth ever advances based on real time, and it
+      // uses Hawaii-reference time specifically so it can't fire early. This
+      // block used to flip currentMonth immediately whenever the drafted month
+      // "wasn't in the future" per the server's raw UTC clock — but the server
+      // is hours ahead of every US timezone, so a September draft finished
+      // late on August 31st (US time) already looked like "September"
+      // server-side and got promoted hours early, switching HR counting over
+      // before August had actually ended anywhere in the US (confirmed in the
+      // Washed Dad's league).
       d.status = 'complete';
       d.completedAt = Date.now();
       draftJustCompleted = true;
