@@ -349,6 +349,23 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
     await saveLeague(league);
   }
 
+  // Lock a month that has already ended in real life but has nowhere to
+  // promote to — i.e. the commissioner never opened next month's draft, so
+  // the block above had no pre-drafted bucket to switch currentMonth into.
+  // Without this, currentMonth just stays stuck on the ended month forever,
+  // and every sync cycle keeps fetching live MLB stats and crediting new HR
+  // to a month that's already over (confirmed in the Ghost of Peavy league:
+  // no September draft was opened, so August kept accumulating HR straight
+  // through September with no promotion to ever stop it). Once the
+  // commissioner does open the next draft, the block above resumes
+  // promoting normally — this only guards the gap in between.
+  if (monthSortKey(realMonth) > monthSortKey(league.currentMonth)) {
+    console.log(`[sync:${leagueId}] ${league.currentMonth} has ended (real month is ${realMonth}) with no next month drafted — locked, skipping sync until the next draft is opened`);
+    delete league.lastSyncStartedAt;
+    await saveLeague(league);
+    return { ok: true, locked: true, month: league.currentMonth };
+  }
+
   // Redraft reminder — nudge the commissioner (push notification) once per
   // league per target month when the current month is about to end and next
   // month hasn't been (pre-)drafted yet. Only applies to monthly-cadence
