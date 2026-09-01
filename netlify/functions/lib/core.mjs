@@ -278,9 +278,9 @@ async function fetchHealth(league, playerName) {
 }
 
 
-function logChange(league, player, delta, mgr, month, src) {
+function logChange(league, player, delta, mgr, month, src, total) {
   if (!league.changeLog) league.changeLog = [];
-  league.changeLog.push({ t: Date.now(), player, delta, mgr, month, src });
+  league.changeLog.push({ t: Date.now(), player, delta, mgr, month, src, total });
   if (league.changeLog.length > 500) league.changeLog = league.changeLog.slice(-500);
 }
 
@@ -516,7 +516,7 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
         } else if (delta > 0) {
           // Real new HR detected by sync
           slot.hr = Math.max(0, (parseInt(slot.hr) || 0) + delta);
-          logChange(league, slot.player, delta, mgr, key, 'sync');
+          logChange(league, slot.player, delta, mgr, key, 'sync', slot.hr);
           added += delta;
           hrEvents.push({ player: slot.player, delta, mgr, baselineAfter: r.seasonHR });
         } else if (delta < 0) {
