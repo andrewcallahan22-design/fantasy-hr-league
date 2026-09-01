@@ -301,7 +301,7 @@ function computeLeader(league) {
 }
 
 // ── Main sync ──
-export async function runSyncForLeague(leagueId) {
+export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
   const league = await loadLeague(leagueId);
   if (!league) return { ok: false, error: 'League not found' };
 
@@ -405,8 +405,18 @@ export async function runSyncForLeague(leagueId) {
 
   if (!league.health) league.health = {};
 
-  // Fetch stats + next game + health in parallel
+  // Fetch stats + next game + health in parallel. When multiple leagues
+  // roster the same player, they should see the exact same live numbers —
+  // and there's no reason to hit MLB's API once per league for identical
+  // data. sharedStatsCache is one Map shared across every league synced in
+  // this cron pass (see runSyncForAllLeagues): whichever league gets to a
+  // given player first does the real fetch and populates it; every other
+  // league that rosters the same player this pass reuses that result.
   const results = await Promise.all(players.map(async (p) => {
+    const nk = normName(p);
+    if (sharedStatsCache?.has(nk)) {
+      return { player: p, ...sharedStatsCache.get(nk), ok: true };
+    }
     try {
       let teamAbbr = null;
       for (const mgr of league.managers) {
@@ -418,7 +428,9 @@ export async function runSyncForLeague(leagueId) {
         fetchNextGame(league, p, teamAbbr),
         fetchHealth(league, p),
       ]);
-      return { player: p, ...stats, nextGame, health, ok: true };
+      const result = { ...stats, nextGame, health };
+      sharedStatsCache?.set(nk, result);
+      return { player: p, ...result, ok: true };
     } catch (e) {
       return { player: p, ok: false, err: e.message };
     }
@@ -509,9 +521,12 @@ export async function runSyncForAllLeagues() {
   await ensureLegacyMigrated();
   const index = await listLeagues();
   const results = [];
+  // Shared across every league synced in this pass — see the comment at its
+  // use site in runSyncForLeague for why this exists.
+  const sharedStatsCache = new Map();
   for (const entry of index) {
     try {
-      const r = await runSyncForLeague(entry.id);
+      const r = await runSyncForLeague(entry.id, sharedStatsCache);
       results.push(r);
     } catch (e) {
       results.push({ ok: false, leagueId: entry.id, error: e.message });
