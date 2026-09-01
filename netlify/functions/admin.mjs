@@ -4,6 +4,7 @@
 // GET  ?action=leagues          → all leagues with summary stats
 // GET  ?action=league&id=ID     → full detail on one league
 // POST { action: 'delete-league', leagueId }  → hard delete a league
+// POST { action: 'reset-month-hr', leagueId, month }  → zero every roster slot's hr in a month
 
 import { listLeagues, loadLeague, saveLeague } from './lib/storage.mjs';
 import { verifyAuth, isAdminEmail } from './lib/auth.mjs';
@@ -118,6 +119,37 @@ export default async (req) => {
       delete lg.months[month];
       await saveLeague(lg);
       return Response.json({ ok: true, deleted: month }, { headers: NO_CACHE });
+    }
+
+    // Zero out every roster slot's hr in one month bucket. For undoing HR
+    // that accumulated while a month was erroneously flipped live early (the
+    // draft.mjs currentMonth-timing bug): sync only ever tracks players in
+    // league.months[currentMonth], using a per-player season-total baseline
+    // that freezes the instant a player drops out of that set — so once
+    // set-current-month-only moves the pointer back off the wrongly-promoted
+    // month, that month's players stop accruing, and this just wipes the hr
+    // they picked up during the erroneous window. Refuses on the current
+    // month so it can't be used to zero out a month that's actually live.
+    if (body.action === 'reset-month-hr') {
+      const { leagueId, month } = body;
+      if (!leagueId || !month) {
+        return Response.json({ ok: false, error: 'leagueId and month required' }, { status: 400 });
+      }
+      const lg = await loadLeague(leagueId);
+      if (!lg) return Response.json({ ok: false, error: 'League not found' }, { status: 404 });
+      if (month === lg.currentMonth) {
+        return Response.json({ ok: false, error: 'Refusing — this is the current month' }, { status: 400 });
+      }
+      const bucket = lg.months?.[month];
+      if (!bucket) return Response.json({ ok: false, error: 'That month does not exist' }, { status: 400 });
+      let slotsReset = 0;
+      for (const roster of Object.values(bucket.rosters || {})) {
+        for (const slot of roster) {
+          if (slot.hr) { slot.hr = 0; slotsReset++; }
+        }
+      }
+      await saveLeague(lg);
+      return Response.json({ ok: true, month, slotsReset }, { headers: NO_CACHE });
     }
 
     // Surgically set a specific roster slot's hr value — does NOT touch

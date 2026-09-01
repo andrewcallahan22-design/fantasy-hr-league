@@ -359,7 +359,8 @@ export async function runSyncForLeague(leagueId) {
     const daysLeftInMonth = lastTimezoneDaysLeftInMonth(Date.now());
     const nextMonth = nextMonthKey(league.currentMonth);
     const nextMonthDrafted = !!league.months?.[nextMonth];
-    if (daysLeftInMonth <= 2 && !nextMonthDrafted && league.redraftReminderSentFor !== nextMonth) {
+    const nextMonthDraftInProgress = league.draft?.status === 'active' && league.draft?.month === nextMonth;
+    if (daysLeftInMonth <= 2 && !nextMonthDrafted && !nextMonthDraftInProgress && league.redraftReminderSentFor !== nextMonth) {
       try {
         const { dispatchCommissionerNotification } = await import('./notify.mjs');
         await dispatchCommissionerNotification({
