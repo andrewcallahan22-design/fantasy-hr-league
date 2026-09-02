@@ -485,8 +485,22 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
     // month boundary or cron hiccupped" from "was actually off every roster
     // for a while" — anything past it re-anchors cleanly instead of crediting
     // the gap.
+    //
+    // lastSyncedAt undefined means "no evidence of recent tracking," which
+    // must be treated as stale, not continuous — a league that sits LOCKED
+    // (see the ended-month lock above) never reaches this loop at all while
+    // locked, so its players' lastSyncedAt never gets set no matter how long
+    // the lock lasts. Requiring lastSyncedAt !== undefined here (as this
+    // originally shipped) meant a locked league's players — the exact
+    // players this whole mechanism exists to protect — looked like brand
+    // new, never-tracked players instead of stale ones, so their real
+    // pre-existing baseline (stale for the entire lock duration) got used
+    // as-is and dumped its whole backlog the moment the league unlocked
+    // (confirmed live: "The Ghost of Peavy" finished its September draft
+    // after sitting locked since Sept 1, and everyone's HR came back
+    // populated instead of 0).
     const GAP_THRESHOLD_MS = 20 * 60 * 1000;
-    const isStaleReentry = baseline !== undefined && lastSyncedAt !== undefined && (now - lastSyncedAt) > GAP_THRESHOLD_MS;
+    const isStaleReentry = baseline !== undefined && (lastSyncedAt === undefined || (now - lastSyncedAt) > GAP_THRESHOLD_MS);
 
     // Set baseline if first time seeing this player, or re-anchor after a gap
     if (baseline === undefined || isStaleReentry) {
