@@ -61,6 +61,50 @@ function monthSortKey(k) {
   const [m, y] = k.split('-');
   return parseInt(y) * 12 + MONTHS.indexOf(m);
 }
+
+// ── Sync state-machine decisions ──
+// Pulled out as pure functions (no I/O, no mutation) so the whole
+// month-promotion / lock / baseline-reentry state machine can be exercised
+// directly by tests without mocking the MLB API or Netlify Blobs — see
+// core.sync-state.test.mjs. Every incident this app has hit in this area
+// (premature month promotion, a month counting forever with no next draft,
+// a returning player's stale baseline dumping its backlog) was a bug in one
+// of these three decisions, and the last one shipped once already fixed in
+// isolation but broken in combination with another — these tests exist to
+// catch that class of bug before it reaches a live league again.
+
+// Should currentMonth advance to realMonth right now? Only true once the
+// real calendar has actually reached a month AHEAD of currentMonth AND that
+// month has already been drafted (hasNextMonthBucket) — a pre-draft for a
+// future month just waits in league.months until this returns true.
+export function shouldPromoteMonth(currentMonth, realMonth, hasNextMonthBucket) {
+  return realMonth !== currentMonth && hasNextMonthBucket &&
+    monthSortKey(realMonth) > monthSortKey(currentMonth);
+}
+
+// Is currentMonth "stuck" — the real calendar has already moved past it
+// with nothing drafted to promote into? Checked AFTER a promotion attempt,
+// so this only ever fires when promotion had nothing to promote to.
+export function isMonthLocked(currentMonth, realMonth) {
+  return monthSortKey(realMonth) > monthSortKey(currentMonth);
+}
+
+// Should this cycle's fresh seasonHR be credited as new HR, or does the gap
+// since this player was last observed mean the difference is backlog that
+// was never actually earned on any current roster? baseline/lastSyncedAt
+// undefined means "never observed before" — always safe, never stale.
+// baseline defined but lastSyncedAt undefined means "was observed at some
+// point, but we have no record of how recently" (e.g. every player in a
+// league that just spent days locked) — that must be treated as stale, not
+// as evidence of safety, or the entire untracked gap gets credited the
+// instant tracking resumes.
+export function decidePlayerHrDelta({ baseline, lastSyncedAt, now, seasonHR, gapThresholdMs = 20 * 60 * 1000 }) {
+  const isStaleReentry = baseline !== undefined &&
+    (lastSyncedAt === undefined || (now - lastSyncedAt) > gapThresholdMs);
+  const delta = (baseline !== undefined && !isStaleReentry) ? seasonHR - baseline : 0;
+  return { isStaleReentry, delta };
+}
+
 function nextMonthKey(k) {
   const [m, y] = k.split('-');
   let mi = MONTHS.indexOf(m) + 1, yi = parseInt(y);
@@ -339,8 +383,7 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
   // A month can be pre-drafted while still in the future (see draft.mjs);
   // it just sits in league.months waiting until its calendar month arrives.
   const realMonth = lastTimezoneMonthKey(Date.now());
-  if (realMonth !== league.currentMonth && league.months?.[realMonth] &&
-      monthSortKey(realMonth) > monthSortKey(league.currentMonth)) {
+  if (shouldPromoteMonth(league.currentMonth, realMonth, !!league.months?.[realMonth])) {
     console.log(`[sync:${leagueId}] Promoting pre-drafted month ${realMonth} to current`);
     league.currentMonth = realMonth;
     if (!league.months[realMonth].rostersLiveAt) {
@@ -359,7 +402,7 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
   // through September with no promotion to ever stop it). Once the
   // commissioner does open the next draft, the block above resumes
   // promoting normally — this only guards the gap in between.
-  if (monthSortKey(realMonth) > monthSortKey(league.currentMonth)) {
+  if (isMonthLocked(league.currentMonth, realMonth)) {
     console.log(`[sync:${leagueId}] ${league.currentMonth} has ended (real month is ${realMonth}) with no next month drafted — locked, skipping sync until the next draft is opened`);
     delete league.lastSyncStartedAt;
     await saveLeague(league);
@@ -470,48 +513,15 @@ export async function runSyncForLeague(leagueId, sharedStatsCache = null) {
     const baseline = league.seasonBaseline[nk];
     const lastSyncedAt = league.lastSyncedAt[nk];
     const now = Date.now();
-    // A player who sat on nobody's roster in this league for a real stretch
-    // (dropped, or just never re-drafted) stops being synced entirely — their
-    // baseline freezes at whatever it was. If they're later added to a
-    // roster again, blindly diffing against that stale baseline would dump
-    // every HR they hit during the ENTIRE untracked gap onto whoever just
-    // added them, misattributed as if it happened the instant they were
-    // added (confirmed: Juan Soto sat unrostered in "Jeff Thinks He Will
-    // Win" for all of August, then got credited a HR the moment he was
-    // drafted for September). A month-boundary promotion also stops and
-    // restarts tracking, but within the same sync pass (see the auto-promote
-    // block above) — so a genuinely continuous re-draft never sees more than
-    // one cron cycle's gap. 20 minutes safely separates "just crossed a
-    // month boundary or cron hiccupped" from "was actually off every roster
-    // for a while" — anything past it re-anchors cleanly instead of crediting
-    // the gap.
-    //
-    // lastSyncedAt undefined means "no evidence of recent tracking," which
-    // must be treated as stale, not continuous — a league that sits LOCKED
-    // (see the ended-month lock above) never reaches this loop at all while
-    // locked, so its players' lastSyncedAt never gets set no matter how long
-    // the lock lasts. Requiring lastSyncedAt !== undefined here (as this
-    // originally shipped) meant a locked league's players — the exact
-    // players this whole mechanism exists to protect — looked like brand
-    // new, never-tracked players instead of stale ones, so their real
-    // pre-existing baseline (stale for the entire lock duration) got used
-    // as-is and dumped its whole backlog the moment the league unlocked
-    // (confirmed live: "The Ghost of Peavy" finished its September draft
-    // after sitting locked since Sept 1, and everyone's HR came back
-    // populated instead of 0).
-    const GAP_THRESHOLD_MS = 20 * 60 * 1000;
-    const isStaleReentry = baseline !== undefined && (lastSyncedAt === undefined || (now - lastSyncedAt) > GAP_THRESHOLD_MS);
-
-    // Set baseline if first time seeing this player, or re-anchor after a gap
-    if (baseline === undefined || isStaleReentry) {
-      if (isStaleReentry) {
-        console.log(`[sync:${league.id}] ${r.player} re-entered a roster after ${Math.round((now - lastSyncedAt) / 60000)}min untracked — re-anchoring baseline instead of crediting the gap`);
-      }
-      league.seasonBaseline[nk] = r.seasonHR;
+    // See decidePlayerHrDelta's doc comment for the full reasoning — in
+    // short: a gap since this player was last observed (dropped, off every
+    // roster, or the whole league sitting locked) means the difference in
+    // their season total is backlog, not new HR, so it doesn't get credited.
+    const { isStaleReentry, delta } = decidePlayerHrDelta({ baseline, lastSyncedAt, now, seasonHR: r.seasonHR });
+    if (isStaleReentry) {
+      console.log(`[sync:${league.id}] ${r.player} re-entered a roster after ${lastSyncedAt === undefined ? 'an unknown gap' : Math.round((now - lastSyncedAt) / 60000) + 'min'} untracked — re-anchoring baseline instead of crediting the gap`);
     }
     league.lastSyncedAt[nk] = now;
-
-    const delta = (baseline !== undefined && !isStaleReentry) ? r.seasonHR - baseline : 0;
     if (delta !== 0) {
       console.log(`[sync:${league.id}] HR delta for ${r.player}: ${baseline} → ${r.seasonHR} (+${delta})`);
     }
